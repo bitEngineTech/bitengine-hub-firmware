@@ -17,8 +17,8 @@ Zigbee 3.0 + Thread gateway for Home Assistant.
 ## What the hub does
 
 The hub runs Zigbee and Thread **at the same time, on two independent radios**, and connects to
-your network over one Ethernet cable with 802.3af PoE (Wi-Fi 6, 2.4 / 5 GHz, as an alternative
-uplink).
+your network over one Ethernet cable with 802.3af PoE. 5 GHz Wi-Fi 6 is available as an
+alternative uplink; 2.4 GHz Wi-Fi is kept off so that band stays clear for Zigbee and Thread.
 
 - **ESP32-C5** (this repository): Thread border router (OpenThread, running *on the device* — no
   Home Assistant add-on needed), Wi-Fi / Ethernet networking, EZSP bridge for the Zigbee radio,
@@ -46,7 +46,7 @@ flowchart LR
     subgraph HUB[bitEngine Hub]
         direction LR
         subgraph C5[ESP32-C5 — this repo]
-            NET[Ethernet / PoE<br/>Wi-Fi 6 2.4 / 5 GHz]
+            NET[Ethernet / PoE<br/>5 GHz Wi-Fi 6 fallback]
             OTBR[OpenThread<br/>Border Router]
             EZSPB["EZSP ↔ TCP bridge<br/>:6638"]
             REST["OTBR REST API<br/>:8081"]
@@ -111,7 +111,7 @@ components only (ESP-IDF, OpenThread), so the complete image can be rebuilt from
 
 ## License
 
-Copyright 2026 bitEngine.
+Copyright 2026 bitEngine, Inc.
 
 Licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 Built on [ESP-IDF](https://github.com/espressif/esp-idf) (Apache-2.0) and

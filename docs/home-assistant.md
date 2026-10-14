@@ -47,10 +47,13 @@ Server add-on); the hub provides the Thread network the devices join.
 
 ## Channel planning
 
-Zigbee and Thread use separate radios and can run on separate 802.15.4 channels. Keep them apart
-from each other and from your 2.4 GHz Wi-Fi channel; the usual guidance for 2.4 GHz coexistence
-applies. If the hub's Wi-Fi uplink is used, prefer 5 GHz so it does not compete with the
-802.15.4 radios.
+Zigbee and Thread use separate radios and run on separate 802.15.4 channels. Keep them apart
+from each other and from your 2.4 GHz Wi-Fi channels; the usual guidance for 2.4 GHz coexistence
+applies.
+
+The hub's own Wi-Fi uplink is 5 GHz only: 2.4 GHz Wi-Fi is disabled in firmware so that band
+stays clear for Zigbee and Thread. The 5 GHz uplink shares the ESP32-C5's radio with Thread, so
+Ethernet is the recommended uplink.
 
 ## Placement
 

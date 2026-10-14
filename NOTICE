@@ -1,0 +1,15 @@
+bitEngine Hub — ESP32-C5 firmware
+Copyright 2026 bitEngine (https://bitengine.tech)
+
+This product includes software developed by Espressif Systems
+(ESP-IDF, https://github.com/espressif/esp-idf), licensed under the
+Apache License, Version 2.0.
+
+This product includes software from the OpenThread project
+(https://github.com/openthread/openthread), licensed under the
+BSD 3-Clause License.
+
+The Zigbee radio (EFR32MG24) runs Silicon Labs EmberZNet, which is not
+part of this repository. See
+https://github.com/bitEngineTech/bitengine-hub-zigbee-ncp for its
+licensing.

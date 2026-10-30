@@ -104,7 +104,7 @@ components only (ESP-IDF, OpenThread), so the complete image can be rebuilt from
 
 | When | What |
 |---|---|
-| Oct 2026 | Public dev-log and feedback collection; validation with Zigbee2MQTT and current Home Assistant releases (in progress — ZHA is tested) |
+| Oct 2026 | Public dev-log and feedback collection; ZHA and Zigbee2MQTT tested; validation on current Home Assistant releases in progress |
 | Nov 2026 | Source release under Apache-2.0 with build instructions; first signed release images |
 | After source release | Submission to the Zigbee2MQTT and ZHA supported-adapter lists |
 | Dec 2026 (target) | Crowd Supply campaign launch |

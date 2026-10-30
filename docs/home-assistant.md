@@ -30,7 +30,7 @@ serial:
   adapter: ember
 ```
 
-Status: being validated; will be marked tested once confirmed on a current Zigbee2MQTT release.
+Status: tested with Zigbee2MQTT 2.14.2 (October 2026).
 
 ## Thread and Matter
 

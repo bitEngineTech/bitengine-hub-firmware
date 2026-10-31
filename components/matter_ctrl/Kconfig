@@ -1,0 +1,8 @@
+# CHIP 的 Kconfig 没给 C5 定 GPIO_RANGE_MAX（connectedhomeip config/esp32/components/chip/Kconfig，esp_matter 1.6.0~1），
+# 开了 CONFIG_ENABLE_ETHERNET_TELEMETRY（平台 DNS-SD 要它）就配置失败："invalid literal for int()"（docs/15 设计 9.8a 第 6 条）。
+# 同名符号在这里再定义一次补上默认值（Kconfig 允许多处定义，属性合并；CHIP 那几条默认值的条件在 C5 上都不成立，用的就是这一条）。
+# 只用于 CHIP 自己那几个以太网 GPIO 选项的 range 上界；那个驱动我们不编（9.8a 第 5 条）。依赖直连型：HA 型里不可见、不写进 sdkconfig。
+config GPIO_RANGE_MAX
+    int
+    depends on BITENGINE_PROFILE_DIRECT
+    default 28 if IDF_TARGET_ESP32C5

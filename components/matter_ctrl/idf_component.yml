@@ -1,0 +1,12 @@
+# matter_ctrl 的托管依赖：只在直连型里拉 esp_matter（HA 型里本组件是空的，组件管理器跳过这条，HA 型的产物与锁文件里都没有它）。
+# 条件用 BITENGINE_PROFILE_DIRECT 而不是 BITENGINE_ENABLE_MATTER_CTRL：后者在 HA 型里不可见、不写进 sdkconfig，
+# 组件管理器按它判条件时报 "Missing required kconfig option"（M7 第一步实测）。
+# 直连型用自己的锁文件 dependencies.direct.lock（顶层 CMakeLists.txt），两种配置的解算结果不互相改写。
+# 版本钉死（main/idf_component.yml 头注的规矩）：1.6.0~1（2026-10-14，G0-5 实测的就是它）。升级先读 9.8a / 9.8b 的 15 条和
+# tools/patch_esp_matter.py 的原文，再改这里。
+dependencies:
+  espressif/esp_matter:
+    version: "==1.6.0~1"
+    require: private
+    rules:
+      - if: "$CONFIG{BITENGINE_PROFILE_DIRECT} == True"

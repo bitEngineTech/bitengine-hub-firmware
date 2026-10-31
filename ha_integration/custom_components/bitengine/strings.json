@@ -1,0 +1,106 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "bitEngine Hub",
+        "description": "Enter the gateway's web interface password. Leave blank if the gateway has no password set.",
+        "data": {
+          "host": "Host",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate bitEngine Hub",
+        "description": "The gateway rejected the stored password. Enter the current one.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "confirm": {
+        "title": "bitEngine Hub",
+        "description": "Confirm adding **{name}**?\n\nThe gateway is in open mode, so no password is needed. If you later lock it down (Settings → OTBR/API authentication), re-authentication will be requested."
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid password"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Chip temperature"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "tcp_clients": {
+        "name": "Coordinator connections"
+      },
+      "wifi_rssi": {
+        "name": "Wi-Fi signal"
+      },
+      "internal_free_heap": {
+        "name": "Free internal RAM"
+      },
+      "zigbee_channel": {
+        "name": "Zigbee channel"
+      },
+      "ncp_version": {
+        "name": "Zigbee firmware"
+      },
+      "active_interface": {
+        "name": "Network interface",
+        "state": {
+          "eth": "Ethernet",
+          "wifi": "Wi-Fi",
+          "softap": "Access point",
+          "none": "Offline"
+        }
+      }
+    },
+    "binary_sensor": {
+      "mg24_alive": {
+        "name": "Zigbee chip"
+      },
+      "eth_link_up": {
+        "name": "Ethernet link"
+      },
+      "safe_mode": {
+        "name": "Safe mode"
+      },
+      "firmware_unsigned": {
+        "name": "Firmware unsigned"
+      },
+      "night_active": {
+        "name": "Night mode active"
+      },
+      "poe_present": {
+        "name": "PoE powered"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Restart gateway"
+      },
+      "zigbee_restart": {
+        "name": "Restart Zigbee chip"
+      }
+    },
+    "switch": {
+      "night_mode": {
+        "name": "Night mode"
+      }
+    },
+    "number": {
+      "led_brightness": {
+        "name": "LED brightness"
+      }
+    }
+  }
+}

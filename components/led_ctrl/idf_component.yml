@@ -1,0 +1,2 @@
+dependencies:
+  espressif/led_strip: '==3.0.3'   # 钉死，见 main/idf_component.yml 注释

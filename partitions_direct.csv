@@ -1,0 +1,15 @@
+# 直连型（Hub + Muse，纯以太网）的分区表 —— docs/15_muse_direct_design_v1.md 2.4（正本）。8 MB Flash。
+# ⚠️ 只属于直连型：HA 型的 partitions.csv 一个字节都不动（架构 5.8 R-3）。两张表不能 OTA 互换，
+#    换型号只能 USB 线刷（tools/migrate_profile.sh；fctry 要从 0x6B0000 搬到 0x7F0000，设计 8.12）。
+# 偏移全部写死：tools/check_profiles.py 按设计 2.4 的表逐项核对。
+# Name,    Type, SubType,  Offset,    Size
+nvs,       data, nvs,      0x9000,    0x10000
+otadata,   data, ota,      0x19000,   0x2000
+phy_init,  data, phy,      0x1B000,   0x1000
+matter,    data, nvs,      0x1C000,   0x10000
+ota_0,     app,  ota_0,    0x30000,   0x380000
+ota_1,     app,  ota_1,    0x3B0000,  0x380000
+www,       data, spiffs,   0x730000,  0x80000
+hubdb,     data, nvs,      0x7B0000,  0x30000
+coredump,  data, coredump, 0x7E0000,  0x10000
+fctry,     data, nvs,      0x7F0000,  0x4000

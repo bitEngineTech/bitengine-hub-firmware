@@ -1,0 +1,20 @@
+{
+  "domain": "bitengine",
+  "name": "bitEngine Hub",
+  "codeowners": ["@JetLiuzhe"],
+  "config_flow": true,
+  "documentation": "https://github.com/bitEngineTech/bitengine-hub-firmware/tree/main/ha_integration",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/bitEngineTech/bitengine-hub-firmware/issues",
+  "requirements": [],
+  "version": "0.2.0",
+  "zeroconf": [
+    {
+      "type": "_zigbee-bridge._tcp.local.",
+      "properties": {
+        "model": "bitengine-hub*"
+      }
+    }
+  ]
+}

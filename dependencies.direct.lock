@@ -1,0 +1,272 @@
+dependencies:
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
+  espressif/dm9051:
+    component_hash: 417654826696fb63f460f6d0f45e9658d80aa3b3fef328c9376c7dea3661fdbf
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=6.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.0
+  espressif/esp_delta_ota:
+    component_hash: 147161b602ef51e9f6649eb6d90c4d4ac3c94228cb264fa0e68be7877180462d
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.4
+  espressif/esp_encrypted_img:
+    component_hash: a3d20984246263bf8f3fabb0cf5ced72e1499dcc0073fc7334646c0882fd1b3c
+    dependencies:
+    - name: espressif/esp_secure_cert_mgr
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >= 5.3
+      version: '>=2.5.1'
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 2.7.0
+  espressif/esp_matter:
+    component_hash: f4f7aaf721e6c0fb0484f4ef3eed104819eb8ddacddefc99c5c79281e073771e
+    dependencies:
+    - name: espressif/cjson
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.7.19
+    - name: espressif/esp_delta_ota
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=4.3
+      version: ^1.1.0
+    - name: espressif/esp_encrypted_img
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=4.4
+      version: 2.7.0
+    - name: espressif/esp_hosted
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: ~2.7.0
+    - name: espressif/esp_secure_cert_mgr
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=4.3
+      version: ^2.5.0
+    - name: espressif/esp_wifi_remote
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32p4]
+      version: ^0.7.0
+    - name: espressif/mdns
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=5.0
+      version: ^1.1.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.6.0~1
+  espressif/esp_secure_cert_mgr:
+    component_hash: 0b83e150f48d6839f0a0a8753850be55a51cc298cfca7658f21d355d5f41dd67
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 2.9.3
+  espressif/ethernet_init:
+    component_hash: 9f7d29acf5fe32315579ddb6247388291cda555aa529409108c0ada0aa7cd99d
+    dependencies:
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_CH390} == 1
+      name: espressif/ch390
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_DM9051} == 1
+      name: espressif/dm9051
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      version: '*'
+    - matches:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      name: espressif/dp83848
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_DP83848} == 1
+      version: '*'
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_ENC28J60} == 1
+      name: espressif/enc28j60
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - matches:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      name: espressif/ip101
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_IP101} == 1
+      version: '*'
+    - matches:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      name: espressif/ksz80xx
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_KSZ80XX} == 1
+      version: '*'
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_KSZ8851SNL} == 1
+      name: espressif/ksz8851snl
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      version: '*'
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_LAN865X} == 1
+      name: espressif/lan865x
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^0.1.1
+    - name: espressif/lan867x
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_LAN867X} == 1
+      version: '>=2.0.0'
+    - matches:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      name: espressif/lan87xx
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_LAN87XX} == 1
+      version: '*'
+    - matches:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      name: espressif/rtl8201
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target in [esp32, esp32p4]
+      - if: $CONFIG{ETHERNET_PHY_USE_RTL8201} == 1
+      version: '*'
+    - matches:
+      - if: $CONFIG{ETHERNET_SPI_USE_W5500} == 1
+      name: espressif/w5500
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >=6.0
+        version: ^1.0.0
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=5.4.3,!=5.5.0,!=5.5.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.3.0
+  espressif/led_strip:
+    component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.0.3
+  espressif/mdns:
+    component_hash: 1ebe3bd675bb9d1c58f52bc0b609b32f74e572b01c328f9e61282040c775495c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.11.0
+  espressif/mqtt:
+    component_hash: ffdad5659706b4dc14bc63f8eb73ef765efa015bf7e9adf71c813d52a2dc9342
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.0
+  espressif/w5500:
+    component_hash: e6e47022a1f509d1d1197652a554aea84a8cd4d99161061e187ecf4b78a7f6ca
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=6.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.1
+  idf:
+    source:
+      type: idf
+    version: 6.0.2
+direct_dependencies:
+- espressif/cjson
+- espressif/dm9051
+- espressif/esp_matter
+- espressif/ethernet_init
+- espressif/led_strip
+- espressif/mdns
+- espressif/mqtt
+- espressif/w5500
+manifest_hash: ef9bff9fcbd163987158d4ccec22bf9d57b8084fd779f2d0ea166c69daa20466
+target: esp32c5
+version: 3.0.0

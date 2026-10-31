@@ -1,0 +1,48 @@
+# 序列号形状校验的共用样例 —— 固件（device_identity.c 的 serial_shape_ok）
+# 和产线工具（tools/generate_nvs.py 的 check_serial）**必须给出相同结论**。
+#
+# 两边不一致的后果不对称，所以这组样例是有方向的：
+#   · 工具放行、固件判非法 → 身份已经写进 Flash 了，工位 3 才发现，要返工
+#   · 工具拒绝、固件本会放行 → 只是产线上多一次报错，无损失
+# 前者是真事故，所以宁可两边都严。
+#
+# 格式：<ok|bad> <TAB> <序列号>
+# 行尾不要有空格；空序列号那条单独在 run.sh 里测（这里表达不了）。
+
+# ---- 正常（产线分配的编号；形状校验不认内容，所以十六进制样式也合法）----
+ok	BEH-000001
+ok	BEH-999999
+ok	zGW-C5-A1B2C3
+ok	AB-12
+ok	a-b
+ok	BEH-AABBCC-R2
+ok	BEH0AABBCC-X
+# 31 字符：上限之内
+ok	BEH-012345678901234567890123456
+
+# ---- 段数不够 ----
+bad	BEHC5AABBCC
+bad	BEH
+
+# ---- 空段：开头、结尾、连续连字符 ----
+bad	-BEH-X
+bad	BEH-
+bad	BEH--X
+bad	-
+bad	--
+
+# ---- 非法字符（都会被拼进 JSON 和产线报告）----
+bad	BEH AABBCC
+bad	BEH-AA BB
+bad	BEH_AABBCC
+bad	BEH-AA"BB
+bad	BEH-AA/BB
+bad	BEH-AA.BB
+bad	BEH-AA:BB
+bad	BEH-AA+BB
+bad	BEH-<script>
+bad	BEH-AA\BB
+bad	BEH-AA	BB
+
+# ---- 长度：32 字符已超上限（DEVICE_ID_MAX=32 含结尾 NUL，即最多 31 个字符）----
+bad	BEH-0123456789012345678901234567

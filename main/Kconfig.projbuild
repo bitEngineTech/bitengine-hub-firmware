@@ -1,0 +1,991 @@
+menu "bitEngine Configuration"
+
+    choice BITENGINE_PROFILE
+        prompt "Product profile"
+        default BITENGINE_PROFILE_HA
+        help
+            两种产品配置的总开关（docs/15_muse_direct_architecture_v1.md 5.8 R-1，设计 2.1 / 2.7）。
+            编译期决定，没有运行时切换；换配置 = 给 C5 换固件。
+
+            - HA：现有产品。桥接（ZHA / Z2M 经 :6638），Wi-Fi + 以太网，不带 Muse。
+            - Direct：直连型（网关自己当 Zigbee 主机 + Matter 控制器 + Muse）。纯以太网、另一张分区表、没有桥。
+              开发中，不发版。
+
+            ⚠️ 不要在 menuconfig 里切它。直连型有自己的 sdkconfig 和构建目录：
+                idf.py -B build-direct -DSDKCONFIG=sdkconfig.direct \
+                       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.direct" \
+                       -DBITENGINE_PROFILE=direct build
+            （或 bash tools/build_profiles.sh）。顶层 CMakeLists.txt 核对这里的选择与 -DBITENGINE_PROFILE
+            一致，不一致就停：防止拿 HA 型的 sdkconfig 编出一个叫 bitengine-direct 的固件，或者反过来。
+
+            直连型专属的选项一律 depends on BITENGINE_PROFILE_DIRECT（tools/check_profile_rules.py 钉着）。
+
+        config BITENGINE_PROFILE_HA
+            bool "HA (bridge, Wi-Fi + Ethernet) — the shipping product"
+        config BITENGINE_PROFILE_DIRECT
+            bool "Direct (Hub + Muse, Ethernet only) — in development"
+    endchoice
+
+    config BITENGINE_NET_ETH_ONLY
+        bool "Ethernet-only network profile (no Wi-Fi)"
+        depends on BITENGINE_PROFILE_DIRECT
+        default y
+        help
+            纯以太网剖面（docs/15 设计 2.2）：不初始化、也不链接 Wi-Fi。network_mgr 编 wifi_none.c 代替
+            wifi_mgr.c / wifi_probe.c（"没有 Wi-Fi"的空实现：没有凭据、连不上、热点起不来、netif 为 NULL），
+            其余直接调 esp_wifi_* 的地方都在 #if !CONFIG_BITENGINE_NET_ETH_ONLY 里；网页不注册 /wifi/*、
+            /network/softap，/api/v1/status 带 "wifi":"absent"。省出的内部内存见架构 4.3（G0-3：+58 KB）。
+
+            只在直连型里可见（架构 5.8 R-1）；HA 型永远带 Wi-Fi。
+
+    config BITENGINE_ENABLE_ZHUB
+        bool
+        depends on BITENGINE_PROFILE_DIRECT
+        default y
+        help
+            网关自己当 Zigbee 主机（Hub 模式，docs/15 设计 2.1 / 第八节）。**它同时决定桥编不编**（架构 5.8 R-2）：
+            为 y 时不编 :6638 的 TCP 服务（tcp_server.c）与经 USB 的桥（usb_bridge.c）、SMLIGHT 兼容层（/api2/*），
+            不宣告 _zigbee-bridge / _zigbee-coordinator，不注册只服务 :6638 的端点（/mode、/whitelist、
+            /zigbee/clients/disconnect）；MG24 的 UART 照常建（ezsp_bridge_init_uart_only），留给 NCP 升级与将来的 zhub。
+            直连型里也绝不走 IO23 复位 MG24。
+            zhub 本身在 M4 进来；在那之前直连型没有 Zigbee 功能（Zigbee 灯灭 = 未启用），这是开发中间态，不发版。
+            不可见、跟着总开关走：没有"直连型带桥"这种组合，也没有运行时开关（R-2）。
+
+    config BITENGINE_ENABLE_MUSE_LINK
+        bool "Muse direct link (pairing + session)"
+        depends on BITENGINE_PROFILE_DIRECT && SPIRAM
+        select BT_ENABLED
+        default n
+        help
+            直连 Muse（docs/15 设计第四、五节）：编进 ble_window、muse_pair（社区配对 v5）、muse_link（VM API 与会话）
+            与 noise_core（Noise XX 协议核心）。
+            协议代码原样取自上游 muse-gadget-sdk，提交与逐文件哈希见 components/muse_link/UPSTREAM.md。
+            BLE 只经 components/ble_window 用（配对窗口），策略见 BITENGINE_BLE_WINDOW_POLICY。
+            sdkconfig.defaults.direct 把它打开；只在直连型里可见（架构 5.8 R-1）。
+
+    config BITENGINE_ENABLE_MATTER_CTRL
+        bool "Matter controller (client-only, on-network commissioning)"
+        depends on BITENGINE_NET_ETH_ONLY && BITENGINE_ENABLE_MUSE_LINK
+        default n
+        help
+            直连型的 Matter 控制器（docs/15 设计第九节）：esp-matter 的 client-only 控制器 + commissioner，用网关自己的 fabric，
+            不带 server、不带 BLE、不接管 OpenThread（9.2）。只在纯以太网剖面开放（架构 4.3：省出的内部内存才放得下 CHIP）。
+            sdkconfig.defaults.direct 把它打开，CHIP 的那一组选项也在那里（9.2 的表 + 9.8a）。
+            esp_matter 由 components/matter_ctrl/idf_component.yml 带进来，只在直连型里解算、锁在 dependencies.direct.lock；
+            HA 型的产物里没有它（tools/check_profiles.py）。
+
+    config BITENGINE_MATTER_MAX_NODES
+        int "Max Matter nodes on the hub's fabric"
+        depends on BITENGINE_ENABLE_MATTER_CTRL
+        range 1 128
+        default 128
+        help
+            网关 fabric 上最多管多少个 Matter 节点（设计 2.1；节点表 hubdb/mctrl，9.3）。
+            2026-10-24 用户定 32 → 128：节点表、访谈 / 订阅表都在 PSRAM，CHIP 的会话池 / 定时器池 / 交换上下文跟着放大（也在 PSRAM，
+            components/matter_ctrl/CHIPProjectConfig.h 与 sdkconfig.defaults.direct）。结构上限 MC_NODES_CAP（mc_nodes_core.h）。
+            ⚠️ 不是"网关能代播几台"：那是 CONFIG_MDNS_MAX_SERVICES 管的（tools/check_capacity_docs.py），配进本 fabric 的设备每台多占一条代播。
+
+    choice BITENGINE_BLE_WINDOW_POLICY
+        prompt "BLE window policy (how BLE and Thread share the radio)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default BITENGINE_BLE_WINDOW_POLICY_ISOLATED
+        help
+            BLE 窗口与 Thread 怎么分时用射频（docs/15 设计 3.2、2.1）。
+
+            眼下只有 C（隔离重启）：配对时网关重启进一个不起 Thread 的配对剖面，配完再重启回正常模式。
+            A（并存）/ B（暂停 Thread）要等 G0-4 的共存实测（#1851：BLE 反初始化后 Thread 收不到 ACK），
+            通过了再加进这里；没实测之前不提供，免得选了一个没验证过的策略。
+
+        config BITENGINE_BLE_WINDOW_POLICY_ISOLATED
+            bool "C: isolated restart (pairing in a Thread-free boot profile)"
+    endchoice
+
+    config BITENGINE_MUSE_PAIR_WINDOW_S
+        int "Muse pairing window (seconds)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        range 60 600
+        default 180
+        help
+            配对窗口的上限（设计 2.1、5.1）：从配对剖面里开始广播算起，到时没配完就关窗口、重启回正常模式。
+
+    config BITENGINE_MUSE_API_URL
+        string "Muse API base URL (default)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default "https://api.muse.ai"
+        help
+            VM API 的默认地址（设计 2.1、4.5）。配对时服务端下发的 api_url_v2（验过 https://）优先。
+
+    config BITENGINE_MUSE_NOISE_HOST
+        string "Muse Noise host (default)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default "hatch.metaaivm.com"
+        help
+            会话（TLS + WebSocket + Noise）连的主机（设计 2.1、4.6）。配对时下发的 noise_host 优先。
+
+    config BITENGINE_MUSE_DEVICE_FAMILY
+        string
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default "homehub"
+        help
+            link.register 的 device_family（设计 4.7、架构 MD-4；2026-10-22 G0-2 定为 homehub）。
+            不给提示符：是编译期常量，定下后改默认值，不做运行时开关。
+
+    config BITENGINE_MUSE_MODEL_ID
+        string
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default "bitengine-hub-c5"
+        help
+            link.register 的 model_id（同上；备选是官方 ESP32 固件的 esp-link）。
+
+    config BITENGINE_MUSE_MIN_INTERNAL_FREE
+        int "Muse session memory gate: minimum free internal RAM (bytes)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        range 4096 65536
+        default 8192
+        help
+            会话的内存闸门（设计 4.6、N2）：进 FETCH_VM 前内部空闲不到这个数就进 LOW_MEM，60 s 复查。
+
+    config BITENGINE_MUSE_MIN_DMA_FREE
+        int "Muse session memory gate: minimum free DMA-capable RAM (bytes)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        range 2048 32768
+        default 4096
+        help
+            同上，DMA 可用内存（TLS 的 AES 走 DMA）。
+
+    config BITENGINE_DIAG_MUSE_FAULT
+        bool "Diagnostic build: inject a fetch_vms 401 into the Muse session (TC-MU09)"
+        depends on BITENGINE_ENABLE_MUSE_LINK
+        default n
+        help
+            故障注入构建（docs/15 设计 14.4 TC-MU09；N7 故障隔离的用例）。开机后取 VM 不发请求、直接当 401，
+            走状态机的刷新路径，按下面的方式。⚠️ 方式 1 会清掉配对凭据（这正是要验的"撤销"），要重新配对。
+            诊断构建：tools/publish_ota.sh 拒发任何开着 CONFIG_BITENGINE_DIAG_* 的构建。
+
+    config BITENGINE_MUSE_FAULT_MODE
+        int "TC-MU09 mode: 1 = refresh also rejected (token_revoked), 2 = refresh succeeds"
+        depends on BITENGINE_DIAG_MUSE_FAULT
+        range 1 2
+        default 2
+        help
+            1：第一次取 VM 当 401，刷新也当被拒（不发请求）→ token_revoked、清令牌、进 UNPAIRED；
+            2：头两次取 VM 当 401，中间的刷新真的去发（成功）→ credentials_refused，按 1–30 min 退避、保留配对，之后正常上线。
+            计数每次开机从 0 起：方式 1 验完之后在同一份诊断固件上重新配对，配对剖面回来那次开机会又被"撤销"一次 ——
+            验完先刷回正常固件再配对。
+
+    config BITENGINE_DIAG_HUBDB
+        bool "Diagnostic endpoint /api/v1/diag/hubdb (development)"
+        depends on BITENGINE_PROFILE_DIRECT
+        default n
+        help
+            开发期的诊断端点（docs/15 设计 2.5）：GET 读 hub_store 的状态和一个探针键（hub/diag_probe），
+            POST {"text":"…"} 写它、{"erase":true} 删它、{"flush":true} 立即落盘。用来上板验 hubdb 读写、
+            防抖、重启后读回。sdkconfig.defaults.direct 在开发期把它打开；直连型发版前必须关掉。
+
+    config BITENGINE_WIFI_KCONFIG_FALLBACK
+        bool "Use Kconfig WiFi credentials when NVS is empty (DEV ONLY)"
+        default n
+        help
+            Development convenience: auto-connect using the SSID/password
+            below when no credentials are stored in NVS. MUST be disabled
+            for production — factory-fresh devices need to enter SoftAP
+            provisioning immediately.
+
+    config BITENGINE_WIFI_SSID
+        string "WiFi SSID"
+        depends on BITENGINE_WIFI_KCONFIG_FALLBACK
+        default "MyNetwork"
+        help
+            WiFi network name (5GHz only).
+
+    config BITENGINE_WIFI_PASSWORD
+        string "WiFi Password"
+        depends on BITENGINE_WIFI_KCONFIG_FALLBACK
+        default "password"
+        help
+            WiFi network password.
+
+    config BITENGINE_TCP_PORT
+        int "EZSP TCP port"
+        default 6638
+        help
+            TCP port for EZSP bridge (Zigbee2MQTT / ZHA connects here).
+
+    config BITENGINE_HAS_ETHERNET
+        bool "Enable Ethernet (DM9051)"
+        default n
+        help
+            Enable Ethernet support. Requires DM9051 SPI PHY hardware.
+            Enabled on PCB via sdkconfig.defaults.
+
+    config BITENGINE_PSRAM_SELFTEST
+        bool "Run PSRAM self-test after watchdog feed starts"
+        default y
+        depends on SPIRAM
+        help
+            App-level replacement for CONFIG_SPIRAM_MEMTEST (disabled because
+            it runs before the first RS706 WDI feed and trips the 1.6s HW
+            watchdog). Tests all free PSRAM heap regions synchronously in
+            app_main, after watchdog_init() and before network_mgr_init().
+            Adds roughly 1s to boot. Failure is logged but does not halt boot.
+
+    config BITENGINE_HAS_HW_WATCHDOG
+        bool "Enable RS706 Hardware Watchdog"
+        default n
+        help
+            Enable RS706 hardware watchdog WDI toggling via GPIO.
+            Disabled for DevKit stage (no RS706 chip).
+
+    config BITENGINE_WS2812_T0H_NS
+        int "WS2812 T0H pulse width (ns)"
+        default 150
+        range 60 400
+        help
+            0-bit high time. Standard WS2812 is 300ns; this PCB's transistor
+            level shifter widens every pulse by ~150-250ns (X5), so 150ns
+            pre-compensates to ~300-400ns on the wire — centred in the
+            WS2812B T0H spec (220-380ns). Whether it goes back to 300 depends
+            on what AM2 fits in place of the shifter (AM2 work order A2).
+
+    config BITENGINE_WS2812_T1H_NS
+        int "WS2812 T1H pulse width (ns)"
+        default 550
+        range 300 1000
+        help
+            1-bit high time. Standard is 900ns. Measured on the production
+            PCB 2026-08-13 (four-white criterion, /api/v1/led/timing):
+
+              T1H  250 300 | 400 550 600 700 | 850
+                    灭  灭 |  好  好  好  好 | 丢字节
+
+            Below ~400 the widened pulse still misses the 0/1 decision
+            threshold, every bit reads as 0 and the whole chain goes dark.
+            Above ~700 the low gap (1200-T1H-widening) gets eaten, runs of
+            1-bits merge and every byte AFTER the first non-zero one is lost.
+            550 is the centre of that window (~150ns margin each side).
+
+            ⚠️ Verify with WHITE, never a single-channel colour. Red is
+            `00 FF 00` on the wire — nothing follows its first non-zero byte,
+            so the byte-loss failure is invisible to it. T1H=850 shipped for
+            months because the sweep used red as its criterion.
+
+            Set back to 900 after the X5 hardware fix.
+
+    config BITENGINE_HAS_WS2812B
+        bool "Enable WS2812B LED"
+        default n
+        help
+            Enable WS2812B RGB LED via RMT driver.
+            Disabled for DevKit stage (not wired).
+
+    config BITENGINE_HAS_BUTTON
+        bool "Enable hardware button"
+        default n
+        help
+            Enable physical button on GPIO.
+            Disabled for DevKit stage (not wired).
+
+    config BITENGINE_HAS_MG24_RESET_PIN
+        bool "Enable MG24 Hardware Reset Pin"
+        default n
+        help
+            Enable MG24 nRESET control via GPIO for hard reset.
+            Disabled for DevKit stage (pin not wired).
+
+    config BITENGINE_MG24_RESET_ISOLATED
+        bool "MG24 reset line is isolated from the supervisor (AM2 and later)"
+        depends on BITENGINE_HAS_MG24_RESET_PIN
+        default n
+        help
+            Set this on boards where R113 is a diode (anode = ZIGBEE_RESET,
+            cathode = RS706 RESET) plus the added 10K pull-up on the
+            ZIGBEE_RESET net — item A1 of docs/hardware/PCB_硬件待确认清单.md.
+
+            On AM1 boards (default, n) driving IO23 low back-feeds the RS706's
+            weak push-pull output through R67+R113; its RESET pin collapses,
+            drags C5's EN down through R58, and the WHOLE BOARD resets. The
+            firmware still offers the reset as a last resort for a wedged
+            MG24, but says so — /api/v1/zigbee/status reports
+            restart_resets_board so the WebUI can warn accordingly.
+
+            Turning this on without the hardware change makes the UI promise a
+            Zigbee-only restart while the gateway actually reboots. Only set it
+            after verifying the diode and pull-up are populated.
+
+    config BITENGINE_WIFI_DISABLE_PMF
+        bool "Disable Wi-Fi Protected Management Frames (escape hatch)"
+        default n
+        help
+            Leave OFF. PMF is negotiated whenever the AP supports it (IDF default,
+            "PMF optional"); WPA3-only and PMF-required WPA2 routers need it.
+            2026-03-30..2026-09-13 the firmware disabled PMF unconditionally, citing
+            SA Query timeouts while the 802.15.4 (Thread) radio is active. That was
+            never isolated; on the production PCB with IDF v6.0.2, 20 minutes of
+            WPA3-SAE + pmf:1 under 53 back-to-back 802.15.4 active scans produced
+            zero disconnects (docs/产品化TODO T2.17).
+            Turn this on only if the field shows repeated STA disconnects with
+            reason=209 (WIFI_REASON_SA_QUERY_TIMEOUT). Cost: WPA3-only APs cannot
+            be joined at all.
+
+    config BITENGINE_WIFI_FLOAT_ETH_IP
+        bool "Float the Ethernet IP onto Wi-Fi during failover"
+        default y
+        help
+            When Ethernet drops on a dual-uplink gateway, move the Ethernet's own IP
+            (the address ZHA/OTBR/HA are configured to reach, e.g. socket://<eth-ip>:6638)
+            onto the Wi-Fi interface as a static address and broadcast a gratuitous ARP.
+            External fixed-IP clients then follow the active link automatically after one
+            reconnect, with no Home Assistant reconfiguration. Requires both interfaces on
+            the same L2 subnet (they are: the router bridges wired + 5GHz); since 2026-10-06
+            this is checked: if the Ethernet IP is not inside Wi-Fi's own subnet the gateway
+            logs a warning and keeps Wi-Fi on its own address. It also only floats while the
+            configured Wi-Fi SSID is the one configured when Ethernet got the address (changing
+            Wi-Fi networks with the cable out stops the float; switching back resumes it).
+            The DNS servers Wi-Fi had are
+            carried over (setting a static address clears lwIP's global DNS; before
+            2026-10-06 name resolution failed for the whole float). The address is
+            reclaimed onto Ethernet the instant its link returns.
+            2026-09-14: without this, failover to Wi-Fi keeps only gateway-originated
+            traffic alive; the Zigbee bridge (inbound, IP-bound) drops because ZHA cannot
+            follow the address change (docs/产品化TODO T2.23).
+            This state lives in RAM: a reboot while the cable is still out loses it — see
+            BITENGINE_WIFI_FLOAT_BOOT_TAKEOVER below.
+            No router reservation is required for short outages; a DHCP reservation only
+            matters if an outage outlasts the lease (the float does not track the lease).
+            Since T9.37 (BITENGINE_SVC_IDENTITY, default y) this static float is only the
+            fallback: the service address normally moves between the interfaces by DHCP
+            (see that option). The float here runs when the identity mechanism is not in
+            charge: either interface has a static IP, or the service identity is Ethernet and
+            the router keys leases by MAC only / the identity mechanism gave up for this boot
+            (a Wi-Fi identity is pinned to Wi-Fi instead, see that option).
+
+    config BITENGINE_WIFI_FLOAT_BOOT_TAKEOVER
+        bool "Also take the Ethernet IP over at boot when the cable is still out"
+        depends on BITENGINE_WIFI_FLOAT_ETH_IP
+        default y
+        help
+            T9.20 (2026-10-06). Without this, rebooting while the Ethernet cable is out
+            (power cut, watchdog, user reboot, reboot after an update) leaves Wi-Fi on its
+            own DHCP address, and ZHA/OTBR (configured with the Ethernet IP) stay
+            disconnected until the cable returns.
+            While Ethernet holds a DHCP lease, the gateway stores the address, mask,
+            gateway, lease expiry (wall clock) and a fingerprint of the configured Wi-Fi
+            SSID in NVS (namespace "net_svc"; rewritten only when something changes or the
+            lease is renewed, at most every lease/4 clamped to 5-30 min; not stored while
+            no Wi-Fi is configured; erased by factory reset).
+            At boot, once the cable is still absent 20 s after the network manager starts
+            and Wi-Fi has its own address, the stored Ethernet IP is floated onto Wi-Fi only
+            when ALL of these hold:
+              - it is inside Wi-Fi's current subnet, and Wi-Fi is still the same SSID;
+              - the lease has not expired (5 min margin), judged against a trusted wall
+                clock: SNTP synced in this boot, or inherited from a previous boot that had
+                a trusted clock across an esp_restart() (the RTC keeps time across it).
+                After a power cut, or a crash / watchdog reset (main.c's extra restart after
+                such a reset clears the inherited mark), it waits for SNTP; without Internet
+                time it never takes over. An infinite lease (DHCP option 51 = 0xFFFFFFFF)
+                skips the clock check;
+              - an ARP request for the address (3 s window, sent from Wi-Fi's own address)
+                gets no answer from another device. Blind spots: a device that is itself
+                probing at that moment, or one that ignores ARP.
+            Otherwise Wi-Fi keeps its own address and the gateway logs a W line starting
+            with "开机接管：" (waiting for the clock, or why it refused); plugging the cable
+            back in restores everything. Static Ethernet IPs have no lease to verify and
+            are never taken over at boot (the runtime float still works for them).
+            Once taken over, the address is held like a runtime float: until the cable
+            returns; the lease is not tracked afterwards. The address is only floated while
+            the configured Wi-Fi SSID is the one it was captured under (runtime float too):
+            switching to another network drops it, switching back resumes it.
+            Only a boot that actually took the address over counts as "fell back": when
+            the cable returns, the address goes back to Ethernet and a RECOVERED event is
+            posted (MQTT and the Thread border router follow Ethernet), same as a runtime
+            failover. A boot that merely lacked Ethernet posts nothing (T2.16).
+            /api/v1/status reports the outcome in svc_takeover; values and meaning:
+            network_mgr_svc_takeover_state() in network_mgr.h.
+            Rules: components/network_mgr/svc_policy.c (host test: test_host/run.sh).
+            Turn off to stop storing the snapshot and taking it over at boot; the runtime
+            float (including its subnet check and DNS carry-over) is unaffected.
+            Since T9.37 (BITENGINE_SVC_IDENTITY) the snapshot is still stored, but the boot
+            takeover only runs when the identity mechanism is not in charge (same cases as
+            the runtime float above). The snapshot is also what an upgraded unit migrates
+            from: same Wi-Fi network -> service identity = Ethernet, service address = the
+            snapshot's address.
+
+    config BITENGINE_MDNS_SVC_IP_ONLY
+        bool "mDNS announces only the Ethernet service IP for this gateway's own name"
+        depends on BITENGINE_WIFI_FLOAT_ETH_IP
+        default y
+        help
+            T9.34 (2026-10-07). Without this, the stock mdns component (1.11.0) treats the
+            Wi-Fi and Ethernet interfaces on the same subnet as duplicates, lets the one with
+            the numerically larger address answer, and lists both addresses with its own
+            first (captured on the bench: answers from the Wi-Fi address, A records
+            [Wi-Fi, Ethernet]). HA / ZHA / Zigbee2MQTT record the first address when the
+            gateway is added, so they can end up on the Wi-Fi address - and lose the gateway
+            when the cable is pulled, because the Ethernet IP then floats onto Wi-Fi and
+            replaces Wi-Fi's own address.
+            With this on, the A record for <hostname>.local carries exactly one address.
+            With BITENGINE_SVC_IDENTITY in charge (the default) that is the service address,
+            announced as soon as it is known and kept even while no interface holds it
+            (handover gap, boot grace): HA should record it, wherever it lives right now.
+            Before it is known (first install), nothing for up to 60 s, then Wi-Fi's own
+            address. The rest of this list is the fallback (identity not in charge):
+              - the Ethernet service IP whenever Ethernet holds it (link up and addressed),
+                it is floated onto Wi-Fi, or the cable was just plugged back in and
+                Ethernet is still in DHCP (up to 10 s). On the Wi-Fi interface only if the
+                service IP is inside Wi-Fi's subnet (or floated onto it): with Ethernet and
+                Wi-Fi on different subnets, Wi-Fi keeps announcing its own address;
+              - nothing (no A and no AAAA for the gateway's own name; services are still
+                announced) while the service IP is not settled at boot: during the first
+                60 s after the network manager starts, while the Ethernet link is up without
+                an address or the boot takeover (BITENGINE_WIFI_FLOAT_BOOT_TAKEOVER) is still
+                deciding; after 60 s Wi-Fi's own address is announced until that resolves.
+                Also nothing on the Wi-Fi interface for the few seconds its address is 0
+                (the service IP was just handed back and Wi-Fi is re-running DHCP);
+              - Wi-Fi's own address otherwise (no Ethernet this boot, takeover refused,
+                Ethernet DHCP failed, or the IP could not float: other SSID / subnet).
+            When the address changes the gateway re-announces (and once more 2 s later, in
+            case mdns dropped the first request); an announcement that carries only the
+            gateway's own addresses puts them in the Answer section (stock: Authority) with
+            the cache-flush bit, so caches that honour it (HA's zeroconf) drop the old
+            address within 1 s (RFC 6762 10.2).
+            On the same subnet one fixed interface answers and the other stays quiet: the
+            stock duplicate detection relies on the two interfaces announcing different
+            addresses, which no longer holds. Which one is decided in a single place,
+            bitengine_if_answers() in tools/patch_mdns.py: Ethernet. Normally all mDNS,
+            including the Thread/Matter proxy records, goes out the wire and stays off the
+            radio Wi-Fi time-shares with Thread, and a Wi-Fi drop no longer moves the
+            answering interface back and forth; Wi-Fi answers only while the cable is out
+            (with the service IP floated onto it). On networks where Wi-Fi had the larger
+            address (the bench), the proxy records move from Wi-Fi to Ethernet.
+            mdns side: tools/patch_mdns.py group 4 (SVCIP), applied at build time.
+            Rules: svc_mdns_decide() in components/network_mgr/svc_policy.c (host test:
+            components/network_mgr/test_host/run.sh).
+            A device that was installed over Wi-Fi only and later got a cable: with
+            BITENGINE_SVC_IDENTITY its service address is Wi-Fi's original address and moves
+            onto the cable, so both the announcement and a hand-typed address keep working.
+            In the fallback the announcement moves to the Ethernet IP and a hand-typed Wi-Fi
+            address does not.
+            Turning this off restores the stock A record contents only; the mdns patches
+            stay, so the same fixed interface (Ethernet) still answers - the Ethernet address
+            then always comes first, deterministically, instead of whichever is larger.
+
+    config BITENGINE_SVC_IDENTITY
+        bool "Service address follows a DHCP identity (dual-direction float)"
+        depends on BITENGINE_WIFI_FLOAT_ETH_IP && BITENGINE_WIFI_FLOAT_BOOT_TAKEOVER
+        default y
+        help
+            T9.37 (2026-10-07). Design: docs/16_service_identity_dual_float_design_v1.md.
+            The service address (the one HA / ZHA / Zigbee2MQTT / OTBR record, and the only
+            one mDNS announces for this gateway) is the lease of a DHCP identity S
+            (client-id, option 61), not "the Ethernet address". S is the client-id of the
+            interface that first got an address on this network: Ethernet if the cable was
+            in at install time, otherwise Wi-Fi. It is stored in NVS (namespace net_id) together
+            with a fingerprint of the configured Wi-Fi SSID, and never re-decided by boot races.
+            A factory reset deliberately keeps it (decided 2026-10-07): the address is not a
+            user setting, and wiping it would re-decide a Wi-Fi-installed, later-cabled unit as
+            "Ethernet", breaking the address HA recorded. While Wi-Fi is unconfigured after the
+            reset a temporary first-install identity is used (RAM only); as soon as Wi-Fi gets an
+            address on the recorded network again, the stored identity is resumed. It is re-decided (as a first install)
+            when Wi-Fi gets an address on a different network, or the service address's
+            subnet is on neither interface any more. While no Wi-Fi is configured (factory
+            line) the identity stays in RAM only, so shipped units do not carry an
+            "Ethernet" identity from the line test. Units upgraded from older firmware
+            migrate from the boot-takeover snapshot (BITENGINE_WIFI_FLOAT_BOOT_TAKEOVER):
+            same Wi-Fi network -> Ethernet, with the snapshot's address.
+            The holder requests the lease with client-id S; the other interface uses the
+            other interface's client-id (the two swap when the holder is not S's own NIC).
+            Routers that key leases by client-id (RFC 2131; measured on the bench router)
+            then give the service address to whichever interface holds it, and it renews
+            normally there. Holder: Ethernet while its link is up and it has an address in
+            the service subnet; otherwise Wi-Fi. At runtime a newly plugged cable first gets
+            an address with the other identity (proving the wired path and that it is the
+            same subnet); only then is the service address handed over. At boot with the
+            cable in, Ethernet is presumed the holder (handed to Wi-Fi if its DHCP times out
+            in 10 s; after two such timeouts on one link, Ethernet is not given it back until
+            the link drops); with the cable out, the holder is decided after a 10 s link
+            grace. Wi-Fi never holds the service address while it is on a different subnet
+            and Ethernet is on the service subnet (two separate networks).
+            Handover: both interfaces first switch to a dummy client-id and stop DHCP
+            (esp_netif_dhcpc_stop sends a DHCPRELEASE; with the dummy id it matches no
+            lease), then restart with their new ids. The old holder has dropped the address
+            before the new one asks, so the DHCP ARP check sees no conflict. Gap: one DHCP
+            round (2026-10-07 bench: ZHA reconnected 1.2 s after a cable plug-in handover and
+            7.6 s after a cable pull); TCP connections on the old interface are reset and
+            clients reconnect. The new holder sends gratuitous ARP 3 times.
+            Example: installed on Wi-Fi (address .36), cable plugged later: Ethernet first
+            gets .34 with its own id, then takes .36 (Wi-Fi switches to .34); HA keeps
+            using .36 over the cable. Cable pulled: .36 moves back to Wi-Fi.
+            Degraded mode. If S is Wi-Fi, the service address is pinned to Wi-Fi: both
+            interfaces use their own client-id, Wi-Fi keeps the service address, Ethernet is
+            just a second address (traffic to the service address uses Wi-Fi even with the
+            cable in, but the address HA recorded never breaks); /api/v1/status reports
+            svc_holder=wifi_pinned. If S is Ethernet, the old behaviour is used (service
+            address = Ethernet address, static float onto Wi-Fi per
+            BITENGINE_WIFI_FLOAT_ETH_IP, boot takeover), which keeps that address working.
+            Degraded mode is entered:
+              - recorded per Wi-Fi network: a swapped interface asking with S gets exactly
+                the address it got earlier this boot with its own client-id - the router
+                keys leases by MAC only. Retried at the first boot at least 7 days after
+                it was recorded (counted on a trusted wall clock: SNTP, or inherited across
+                esp_restart; stamped once the clock becomes trusted), so removing a DHCP
+                reservation or replacing the router recovers by itself; changing Wi-Fi
+                networks also retries;
+              - this boot only (retried next boot): the swapped Wi-Fi gets no address for
+                20 s after associating (some servers NAK or ignore a client-id from another
+                MAC); a swapped request hit an ARP conflict (DHCPDECLINE); or a swapped
+                interface got some other address (e.g. a MAC-based DHCP reservation pins the
+                service address to S's own interface);
+              - always uses the old behaviour, regardless of S: static IP on either interface,
+                no Ethernet, NVS unreadable.
+            An address obtained while swapped is never adopted as the service address: it
+            only changes when S's own interface, asking with its own client-id, is given a
+            new one (e.g. the lease expired during a long power cut). Rules: svc_id_* in components/network_mgr/svc_policy.c (host test:
+            components/network_mgr/test_host/run.sh).
+            Requires CONFIG_LWIP_DHCP_DISABLE_CLIENT_ID=y (the stock option 61 is replaced
+            by components/network_mgr/svc_cid.c; a compile-time check enforces it).
+            /api/v1/status reports svc_identity, svc_ip, svc_holder and svc_id_mode
+            (meanings in network_mgr.h). Bench procedure: docs/test_cases_stability.md test 6e.
+
+    config BITENGINE_WIFI_KEEPALIVE_MS
+        int "Wi-Fi uplink keepalive interval (ms, 0 = off)"
+        default 5000
+        help
+            Every N ms, while Wi-Fi is the ACTIVE uplink (i.e. failed over to Wi-Fi),
+            send one tiny ICMP echo to the Wi-Fi gateway, pinned to the STA netif.
+            Purpose: keep the AP from "parking" an otherwise-idle client. It does NOT
+            run while Ethernet is primary and Wi-Fi is idle backup: parking an unused
+            interface is harmless and the first failover traffic wakes it anyway.
+            2026-09-14 on the production PCB the router (and likely a class of
+            consumer APs) stopped delivering DOWNLINK unicast to the gateway for
+            3-24s once per ~60s whenever the gateway sent no uplink; any continuous
+            uplink made it vanish (docs/产品化TODO T2.21). Uplink from the gateway
+            was always clean, only downlink-to-us stalled, so PS/PS_NONE did not
+            help. This costs ~64 bytes of airtime per interval.
+            Only meaningful when Wi-Fi carries traffic (double-uplink failover to
+            Wi-Fi, or clients addressing the Wi-Fi IP). Set 0 to disable. Keep the
+            interval well under the AP's ~60s park threshold.
+
+    config BITENGINE_EZSP_HW_FLOWCTRL
+        bool "Enable EZSP UART hardware flow control (RTS/CTS)"
+        default n
+        help
+            Drive RTS on IO2 and sample CTS on IO3 for the MG24 link.
+
+            Only turn this on together with an MG24 flashed from the
+            460800 + flow-control build (the images in mg24/release/;
+            mg24/README.md documents the pairing). Against firmware built with flow
+            control None the MG24 never drives our CTS, the line floats,
+            and every TX blocks — Zigbee goes completely dead.
+
+            Leave n until both chips are flashed as a pair.
+
+    config BITENGINE_MG24_BOOTLOADER_BAUD
+        int "MG24 Gecko Bootloader baud rate"
+        default 115200
+        help
+            Baud rate of the Gecko Bootloader's XMODEM menu on the MG24.
+
+            This is a separate compile-time constant inside the bootloader
+            image (SL_SERIAL_UART_BAUD_RATE), not negotiated at runtime, so
+            it must match whichever bootloader was flashed by J-Link:
+
+              115200  stock bootloader (SDK default)
+              460800  zGateway build — same rate as the NCP application,
+                      so the OTA path never has to re-baud
+
+            Set to 460800 at the same time as BITENGINE_EZSP_HW_FLOWCTRL if
+            the MG24 bootloader is mg24/release/bootloader-uart-xmodem.s37
+            (all production boards).
+
+    config BITENGINE_MG24_REQUIRE_SIGNED_GBL
+        bool "Only flash MG24 .gbl images signed with the official key"
+        default y
+        help
+            The gateway checks the ECDSA-P256 signature tag of every .gbl
+            before the MG24 is touched, with the public key embedded at
+            build time from mg24/release/mg24_gbl_signing_key.pub.
+            A signature that does not verify is rejected whatever this
+            switch says (400 ncp_signature_invalid); the switch only decides
+            what happens to an image that carries NO signature tag:
+
+              y  rejected, 400 ncp_image_unsigned — production setting,
+                 see docs/产品化TODO_2026-09-09.md T1.2
+              n  developer builds: unsigned images are flashed as before
+
+            The cloud OTA path always requires a signature, regardless.
+            Verification happens in the C5, not in the MG24 bootloader, so
+            the deployed bootloader is unchanged; the tag is stripped again
+            before the XMODEM upload because that bootloader has no key
+            provisioned and would reject a signed container after erasing
+            the old application.
+
+    config BITENGINE_RS706_WDO_FUNCTIONAL
+        bool "RS706 WDO can actually assert MR (AM2 and later)"
+        depends on BITENGINE_HAS_HW_WATCHDOG
+        default n
+        help
+            AM1 板上 RS706 的 WDO 经 R55(4.7K)/R57(10K) 与 MR 内部上拉分压后
+            仍有 1.16-1.42V，远高于 MR 的 VIL=0.33V——喂不喂狗都不会产生复位
+            （docs/hardware/PCB_硬件待确认清单.md X7/A6）。
+
+            置 n 时 wd_feed 仍然翻转 WDI（便于示波器验证链路），但后备完全
+            由软件恢复引擎承担。
+            AM2 修好这条通路后置 y，喂狗即变为条件喂狗：任务心跳不健康就
+            停止喂狗，让硬件在 ~1.6s 后拉复位。这是唯一一条"固件彻底卡死
+            也能复位"的路径。
+
+    config BITENGINE_ENABLE_BLE_PROXY
+        bool "Enable BLE proxy (passive BLE scan -> MQTT)"
+        depends on !BITENGINE_PROFILE_DIRECT
+        default n
+        help
+            直连型里不可选（docs/15 设计第三节）：直连型的 BLE 只经 ble_window 用（配对窗口），
+            ble_proxy 会自己初始化 NimBLE 并常驻扫描，两者不能在同一构建里。HA 型不受影响。
+
+            components/ble_proxy 已完整实现（NimBLE 被动扫描 + 30s 限频 + MQTT 上报），
+            但**默认关**，因为 BLE 扫描会破坏 802.15.4 的 CCA，让 Zigbee/Thread 收发
+            出问题。docs/09 §6.2 当初自我质疑的结论「BLE 扫描干扰极小」已被实测推翻。
+
+            这个开关是 2026-08-17 从 main.c 里一行注释掉的 ble_proxy_init() 改过来的：
+            注释不是守卫 —— 它挡不住谁顺手删掉再启用，也不会在任何 VERIFY 里露面。
+
+            ⚠️ 开之前必须先解决与 Zigbee/Thread 的射频共存，否则现象是
+            "Zigbee 设备零星丢包/掉线"，而且极难归因到 BLE。
+
+            另：关着它**不省内存**。2026-08-17 做过 A/B 全量构建，
+            CONFIG_BT_ENABLED=y/n 两版逐段字节完全相同（HP SRAM 238573 vs 238573）
+            —— 因为 ble_proxy_init() 不被调用，链接器把整个归档丢掉了。
+            所以别为了省内存去动 BT 相关配置，那条路收益是 0。
+
+    config BITENGINE_ENABLE_OT_CLI
+        bool "Enable OpenThread CLI on the USB console (RF lab / diag builds only)"
+        default n
+        help
+            把 OpenThread CLI 接到 USB Serial/JTAG 控制台。为射频实验室测量而加：
+            CONFIG_OPENTHREAD_DIAG 一直是 y，但 CLI 从未被初始化，所以 `diag`
+            命令至今没有输入口。开了之后可以
+
+                diag start / diag channel 15 / diag power 20 / diag repeat 1 127
+
+            让 C5 的 2.4G 802.15.4 射频连续发调制包，用频谱仪量实际口面功率、
+            谱密度、带边与谐波 —— 这正是 docs/hardware/射频功率与认证.md 第三节
+            「回读不是证据，以实测为准」要的那种证据。⚠️ 没有连续载波：ESP 端口
+            没实现 otPlatDiagRadioTransmitCarrier / TransmitStream，`diag cw` 与
+            `diag stream` 返回 NotImplemented（2026-10-09 核实）。步骤见
+            docs/test_cases_rf_bench.md 第 3.2 节。
+
+            ⚠️ 出厂必须保持 n，三条理由，每条都足够：
+
+            1. **泄密**：CLI 上 `dataset active -x` 会明文吐出 Thread NetworkKey
+               与 PSKc，`factoryreset` 会直接抹掉网络。虽然要物理插 USB 才够得着，
+               但这是把一个无认证的管理面永久挂在控制台上。
+            2. **吃 4KB 内部 SRAM**：esp_openthread_cli_create_task() 内部是
+               xTaskCreate(..., 4096, ...)，落内部内存，我们改不了（IDF 的函数
+               不接受栈参数，也没有对应的 deinit）。**推算**（未实测）：dma.min_free
+               会从 5319 掉到 1200 出头，而 ot_cli_loop 还要 esp_console_init() +
+               linenoise 的行缓冲，实际只会更低 —— 总之**低于硬停判据 6 的 3072
+               地板**。所以 diag 构建跑 tools/test_api.sh 时那一条红是预期的，
+               不是回退；真要用这个构建做长时间测量，先量一次 /diag/heap 心里有数。
+            3. **抢 stdin**：ot_cli_loop 会 esp_console_init() + linenoise 接管
+               标准输入，并打印 "> " 提示符与日志交织。
+
+            ⚠️ 还有一条工程约束：IDF **没有**提供 CLI 的 deinit/delete，而
+            thread_br_start() 在 stop 之后可能再被调用（失败路径、配网结束后的
+            延迟启动）—— 所以调用点必须有一次性守卫，否则重启一次 Thread 就多一个
+            ot_cli 任务抢同一个 stdin。
+
+    config BITENGINE_ENABLE_MDNS_LOAD
+        bool "Enable synthetic mDNS load generator (scale experiments only)"
+        default n
+        help
+            开放 POST/GET /api/v1/diag/mdns_load，按真实 Matter 设备的线上格式
+            连续注册 N 条假服务（instance/host/TXT/subtype 逐项同形状），
+            用来在**一块板、零真实设备**的条件下把容量墙推到面前。
+
+            为什么需要：本设备的容量墙是一串**可数的计数/长度上限**，不是内存 ——
+            Zigbee 侧固件根本不知道接了几个设备（决策 1 纯字节流透传），Thread 侧
+            OT 的表全是编译期预分配。所以验证容量不需要 N 台设备，只需要 N 条记录。
+            方案全文见 docs/扩到50设备_2026-08-17.md 的「不买 50 个设备怎么验证」C 节。
+
+            ⚠️ **出厂必须保持 n**：这些记录会**真的播到局域网上**，
+            HA / matter-server 会真的看到一堆假 Matter 设备（它们不可达，
+            控制器会一直重试）。实验做完 `{"n":0}` 撤回，或直接重启。
+
+            ⚠️ 它**不覆盖 SRP server 与 OT 侧开销**（直接打 mDNS，绕过 SRP）。
+            所以必须与 D 方案交叉验证：用网关自己的 SRP client（或一块外部
+            Thread 节点）跑通真实链路，比对线上字节数确认两者等价，再用本模块外推。
+
+    config BITENGINE_FAULT_INJECTION
+        bool "Enable watchdog fault injection endpoints"
+        default n
+        help
+            开放 POST /api/v1/diag/fault，可注入任务挂起、内存抽干、MG24 静默、
+            Thread 射频冻结等故障，用于验证看门狗各层真的会触发
+            （docs/04_watchdog_design_v2.md 第十一节，TC-W01~W10）。
+
+            v1 的堆告警/堆重启/泄漏检测三条路径都不可能触发却没人发现，
+            根因就是没有这类用例。出厂固件保持 n。
+
+    config BITENGINE_OT_LOG_LEVEL
+        int "OpenThread runtime log level (1=CRIT 2=WARN 3=NOTE 4=INFO 5=DEBG)"
+        depends on OPENTHREAD_LOG_LEVEL_DYNAMIC
+        range 1 5
+        default 2
+        help
+            thread_br 在 esp_openthread_init() 之后用 otLoggingSetLevel() 设的级别，同时决定 ESP 日志里
+            "OPENTHREAD" 标签的级别（≥3 才放 INFO）—— IDF 的代播库直接用这个标签打 INFO，不受 OT 级别管。
+            默认 2（WARN）：告警与错误照常进 /api/v1/logs（log_store 只留 OPENTHREAD 的 W/E，INFO
+            本来就进不去）；压掉的是 USB 串口监视里 OPENTHREAD 的 NOTE 与 INFO（角色变化、Border Agent
+            起来这类）—— 要判这些事用 REST（:8081/node/state 等，见 docs/test_cases_factory_provisioning.md TC-07）。
+            ⚠️ 出厂固件别调到 3 以上：每条 SRP 注册多打 22 行 INFO，以 115200 波特忙等写进本板没引出的 UART0，
+            网关重启后设备成批重注册时会把 IDLE 饿死、任务看门狗 panic（数据见
+            docs/test_cases_scale_baseline.md「SRP 代播满载压测」第 2 件）。
+
+    config BITENGINE_DIAG_THREAD_BACKBONE
+        bool "Enable Thread backbone switch test endpoint"
+        depends on OPENTHREAD_ENABLED
+        default n
+        help
+            开放 POST /api/v1/diag/thread/backbone {"to":"eth"|"wifi"}：运行中把边界路由
+            的 backbone 换到指定网口（thread_br_switch_backbone，只拆/建边界路由这一层）。
+            用于验证"以太网断线时边界路由跟着换到 WiFi"这条修法，
+            见 docs/test_cases_stability.md 测试 6c。
+            出厂固件保持 n：产品里换口应由 thread_br 在上行切换时自己做，不该由外部触发。
+
+    config BITENGINE_DIAG_SVC_ID
+        bool "Enable service identity override test endpoint (T9.37)"
+        depends on BITENGINE_SVC_IDENTITY
+        default n
+        help
+            开放 POST /api/v1/diag/svc_id {"s":"eth"|"wifi"}：把服务身份记录改成指定那张卡、服务地址置为"还不知道"，
+            重启后生效（持有者第一次拿到的地址就是新的服务地址）。用于在一块"先插网线装"的板子上模拟
+            "先用 WiFi 装、后插网线"，验证双向浮动，见 docs/test_cases_stability.md 测试 6e。
+            同时开放 GET /api/v1/diag/svc_id：两张卡的 DHCP 状态（租期、距上次 ACK、T1/T2、身份表与实际发出的身份、
+            续租 / 重绑请求数）—— 续租成功时地址不变、IDF 不发事件，只能这样看（测试 6e R5）。
+            出厂固件保持 n：服务身份只该在首次安装时由网关自己定。
+
+    config BITENGINE_DIAG_ZB_SNIFF
+        bool "Enable Zigbee channel sniffer on the C5 802.15.4 radio"
+        depends on OPENTHREAD_ENABLED
+        default n
+        help
+            开放 POST/GET /api/v1/diag/zb_sniff：暂停 Thread，把 C5 的 802.15.4 射频临时调到指定信道、
+            开混杂模式，把空中帧原样录下来（最多 60 s / 400 帧），主机侧 tools/zb_sniff.py 解码并用
+            ZHA 备份里的网络密钥解密。用于看清 Zigbee 设备与 MG24 之间在空口上到底交换了什么
+            （2026-10-07 Sengled 掉线排查）。做法与 H1 核对见 components/thread_br/zb_sniff.c 头注。
+            出厂固件保持 n：录制期间 Thread 中断；而且它能录下局域网里任何 802.15.4 设备的帧。
+
+    config BITENGINE_DIAG_THREAD_PENDING
+        bool "Enable 802.15.4 pending-table stress test endpoint"
+        depends on OPENTHREAD_ENABLED && IEEE802154_ENABLED
+        default n
+        help
+            开放 GET/POST /api/v1/diag/thread/pending：往 802.15.4 帧挂起表里塞入或撤回
+            假短地址（router ID 63 段，Thread 永不分配），并回扫描耗时、MAC"收到重复帧"计数、
+            子设备状态（含是否 CSL 同步）。用于验证挂起表扩到 ≥ 子设备上限之后，满表时 ACK
+            仍然赶得上。步骤与判据见 docs/test_cases_scale_baseline.md「802.15.4 帧挂起表满表压测」。
+            出厂固件保持 n：假条目会占掉真子设备的表位。
+
+    config BITENGINE_DIAG_SRP_INJECT
+        bool "Enable SRP UPDATE inject test endpoint (scale test D)"
+        depends on OPENTHREAD_ENABLED && OPENTHREAD_BORDER_ROUTER
+        default n
+        help
+            开放 POST /api/v1/diag/srp/inject（二进制进、二进制出）：把一条 SRP UPDATE 原样经
+            OpenThread 内部 UDP 栈发给本机 SRP server，回它的应答。tools/srp_load.py --inject 用它
+            扮演 N 台 SRP 客户端，走完整真实链路（SRP server → advertising proxy → mDNS → 局域网）。
+            为什么要绕这一圈：从局域网发往网关自身 OMR 地址的 SRP 包进不了 OT 的 UDP 栈
+            （srp_load.py 头注里的证据链），而一块 Thread 开发板只能是一个 SRP host，补不了规模。
+            步骤与判据见 docs/test_cases_scale_baseline.md「SRP 代播满载压测」。
+            出厂固件保持 n：任何能访问 Web 的人都能借它往 SRP 里塞假设备。
+
+    config BITENGINE_DIAG_COREDUMP
+        bool "Enable coredump download endpoint"
+        depends on ESP_COREDUMP_ENABLE_TO_FLASH
+        default n
+        help
+            开放 GET /api/v1/diag/coredump：把 coredump 分区里那份镜像原样下载下来，离线解码出
+            崩溃那一刻全部任务的回溯：
+              esp-coredump info_corefile -t raw -c <下载的文件> <崩溃那一版固件的 .elf>
+            ⚠️ ELF 必须是崩溃那一版（镜像里只有地址），刷新固件前先把 build 目录的 .elf 留一份。
+            为什么不用 idf.py coredump-info / esptool：读完要芯片级复位，本板以太网在线时会
+            卡进下载模式、只能断电恢复（docs/hardware/硬件缺陷档案.md X6）。
+            ⚠️ /status 报的复位原因帮不上忙：main.c 在非干净复位后会补一次 esp_restart()，
+            panic / 看门狗复位之后看到的一律是 SOFTWARE。
+            出厂固件保持 n：镜像里是崩溃那一刻各任务的栈，可能夹着口令、密钥等明文。
+
+    config BITENGINE_DIAG_CRYPTO_RACE
+        bool "Run the ECDSA-reset vs RSA/SHA race stress test at boot (T9.47)"
+        default n
+        help
+            诊断固件专用。开机 90 s 后跑一轮对照压测：硬件 ECDSA 验签与硬件大数运算 / SHA 并发，
+            ECDSA 锁分别按 v6.0.2 原样（旁路）与修复后各跑两段，每段一行 W 级日志（GET /api/v1/logs）。
+            实现与判读见 components/idf_fixes/crypto_race_diag.c。
+            出厂固件保持 n：旁路那两段是真把缺陷放出来，网关自己的 TLS / Thread 加密也可能被打坏。
+
+    config BITENGINE_DIAG_HEAP_TRACE
+        bool "Enable DMA heap trace diagnostics (failover memory dip)"
+        depends on SPIRAM
+        select HEAP_USE_HOOKS
+        default n
+        help
+            诊断固件专用。以太网断线时自动开一个 12 s 窗口，逐笔记录 DMA 可用内存上的
+            分配（大小、caps、发起任务、何时释放），找出 dma.min_free 低谷那一刻是谁的块
+            还占着；GET /api/v1/diag/heaptrace 读结果，POST {"window_s":N} 手动开窗，
+            {"window_s":0} 重置。记录表全在 PSRAM，不给每块分配加头部。
+            实现与判读见 components/watchdog/wd_heaptrace.c。
+            出厂固件保持 n：它给全系统每一次 malloc/free 挂了钩子。
+
+    config BITENGINE_DIAG_HEAP_TRACE_BOOT_MS
+        int "Also open a heap-trace window at boot (ms, 0 = off)"
+        depends on BITENGINE_DIAG_HEAP_TRACE
+        range 0 60000
+        default 0
+        help
+            非 0 时，追踪器初始化（main.c 里，网络起来之前）就开一个这么长的窗口，抓开机过程里的 DMA 低谷 ——
+            比如 T9.38：开着 MQTT 开机时 dma.min_free 掉到约 2.1 KB。开机窗口里的分配大多是常驻的，
+            "最低点时还占着"的列表会很长：判读要拿开 / 关某个功能的两次开机对比差出来的块。
+            窗口占着时以太网断线不再自动开窗（追踪器同一时间只有一个窗口）。
+
+    config BITENGINE_SRP_READVERTISE
+        bool "Track SRP-proxied mDNS services"
+        depends on OPENTHREAD_ENABLED
+        default y
+        help
+            跟踪 SRP advertising proxy 代播出去的 mDNS 服务（Thread 子设备的
+            _matter._tcp 等），并在"SRP 里注册了、mDNS 里却查不到"时告警——
+            那通常意味着 proxy 静默发布失败（多半是 mdns 服务表满）。
+            这部分只观察、不改动任何记录，开销可忽略，建议保持开启。
+
+            是否**主动撤销并重新宣告**记录由下面的 FORCE_BYE 单独控制。
+
+    config BITENGINE_SRP_READV_FORCE_BYE
+        bool "Force goodbye + re-announce (python matter-server only)"
+        depends on BITENGINE_SRP_READVERTISE
+        default n
+        help
+            开启后做两件事：开机后把每个代播服务先发 TTL=0 的 goodbye 再重新
+            宣告；以及在 esp_restart() 之前再发一次 goodbye。
+
+            ⚠️ 默认关，因为收益只对 **python matter-server** 成立。
+
+            收益（有实证）：python zeroconf 收到 TTL=0 的 PTR 会立即移除缓存并
+            回调 Removed，之后同名 PTR 就是 Added —— 而 python matter-server
+            只有在 Added 分支才会重建订阅，否则要干等 600s 的电池设备存活超时。
+
+            代价（对任何对端都存在）：
+              - 开机后那次：goodbye 与重新宣告之间设备有 BYE_GAP_MS 不可发现
+              - 重启前那次：**主动清掉对端缓存**，而缓存正是扛过"网关重启到设备
+                重新向 SRP 注册"那段空窗的东西（实测 21-35s，远短于 120s 的
+                记录 TTL，本来完全无感）
+
+            2026-08-15 在 matter.js（ghcr.io/matter-js/matterjs-server）上实测：
+            发了 goodbye 之后控制器**零反应**，没有任何 offline / Resolving /
+            Removed / Pairing request，订阅自始至终没断。也就是说对它只有代价、
+            没有收益，而且清缓存这一下恰好落在最脆弱的时刻。
+
+            只有确认对端是 python matter-server 时才开。
+
+            ⚠️ 打开前先跑 docs/test_cases_srp_readvertise.md 的 TC-S03（多设备路径）——
+            它至今没在真板上验过；关着时这段代码根本不编译，出厂固件上跑不出任何信息。
+
+    config BITENGINE_SRP_READV_BYE_GAP_MS
+        int "Gap between goodbye and re-announce (ms)"
+        depends on BITENGINE_SRP_READV_FORCE_BYE
+        default 2000
+        range 1000 10000
+        help
+            goodbye 与重新宣告之间的间隔。必须让两者成为对端能分辨的两个
+            独立事件：zeroconf 收到 TTL=0 会立即移除缓存并回调 Removed，
+            matter-server 自己还有 0.5s 的事件去抖。设为 0 等于什么都没做。
+
+            这段时间内该设备在局域网上不可发现。默认 2000ms。
+
+    config BITENGINE_THREAD_TX_POWER_OVERRIDE
+        bool "Force a fixed Thread (802.15.4) TX power, overriding the region setting"
+        default n
+        help
+            ⚠️ **2026-09-15 起这个开关的含义变了**（docs/14）：Thread 功率现在**默认就按
+            网关的「射频地区」设置**取值（设置页 →「射频地区」，或 `POST /api/v1/radio/region`）：
+            CE 10 / FCC 20 / 其他 8 / 未设置 10 dBm，改地区时立刻生效、不用重启。
+            所以出厂关 **不再等于满功率**，而是等于"按地区"。
+
+            开这个开关 = **无视地区**，强制用下面那个固定值。只给射频实验室用
+            （`docs/test_cases_rf_bench.md`），出货构建别开 —— 开了之后用户在
+            界面上选的地区对 Thread 不起作用，而界面不会说明这件事。
+
+            （以下两段是 09-15 之前的背景，留着说明为什么要管。）
+
+            ⚠️ **C5 自己的 802.15.4（Thread）在没人设功率时就在该芯片功率表的最高一档发射**，
+            而且没有任何一处代码选过这个值：IDF 的 PIB 初始化把 16 个信道全填成
+            功率表末项（`esp_ieee802154_pib.c:70`），OpenThread 自己**从不调**
+            `otPlatRadioSetTransmitPower`（全 OT 源码里只有 factory diags 调它）。
+            也就是说这颗射频的功率此前既没人设、也没人看过。
+
+            这和 Zigbee 那颗不是一回事，别混：MG24 的功率由 Z2M/ZHA 每次启动经
+            EZSP 写进 NCP，09-15 起由 NCP 按地区封顶（docs/14），网关能读到上限
+            （/api/v1/radio/region 的 zigbee.cap_dbm）。**这个开关只管 C5 上的 Thread**。
+
+            开这个开关才会去覆盖。无论开关与否，Thread 启动时都会打一行
+            `802.15.4 TX power:` 日志 —— 关着时那行打印的就是本平台功率表的
+            上限，这是它唯一的可观测出口。
+
+            认证背景见 docs/hardware/射频功率与认证.md。
+
+    config BITENGINE_THREAD_TX_POWER_DBM
+        int "Thread 802.15.4 TX power (dBm)"
+        depends on BITENGINE_THREAD_TX_POWER_OVERRIDE
+        default 20
+        range -24 20
+        help
+            覆盖值，对 16 个信道一起生效（`esp_ieee802154_set_txpower()` 内部就是
+            把功率表 16 项填成同一个数），所以后续换信道不会把它丢掉。
+
+            ⚠️ 驱动会把这个数**向下**吸附到功率表里最近的一档
+            （`ieee802154_txpower_convert()`），不是线性可调。低于表首项按表首项、
+            高于表末项按表末项，两端都不会报错 —— 所以这里填了不等于就发得出来，
+            以实验室实测为准。
+
+            ⚠️ 回读拿不到吸附后的值：`esp_ieee802154_get_txpower()` 返回的是存进
+            PIB 的请求值，原样回显。别拿它当"实际功率"的证据。
+
+    config BITENGINE_OTA_CLOUD_URL
+        string "Cloud OTA manifest URL (https only)"
+        default "https://updates.bitengine.tech/hub/manifest.json"
+        help
+            设备"检查更新"时去拉的 JSON manifest 地址。必须是 https:// ——
+            代码里有硬校验，http 直接拒绝发出请求。
+
+            ⚠️ **这个域名会硬编码进出货固件，出货后换不掉**（换了就得让用户
+            手动升级一次，而那正是云 OTA 要避免的场景）。所以：
+
+              * 用你们自己控制的域名做 CNAME，**别**直接写 github.io 或某个
+                对象存储的原始地址 —— 将来换托管商 = 失去全部存量设备
+              * 默认值 updates.bitengine.tech 是 2026-09-09 定下的出货域名
+                （docs/产品化TODO_2026-09-09.md T1.1），DNS 与托管必须一直
+                在我们自己手里。固件文件放同目录 hub/bitengine-<ver>.bin，
+                manifest 用 tools/make_manifest.py 生成，别手写
+
+            manifest 格式（多余字段会被忽略）：
+                {"version":"v0.6.0-3-gabcdef0",
+                 "url":"https://.../bitengine-v0.6.0-3-gabcdef0.bin",
+                 "size":2166784,
+                 "notes":"一行更新说明"}
+
+            ⚠️ url 指向的必须是**签名版** build/bitengine.bin，不是
+            bitengine-unsigned.bin。传错了设备会拒装（失败方向是安全的，
+            不会变砖），见 docs/guide/固件签名与密钥保管.md。
+
+    config BITENGINE_OTA_CLOUD_TIMEOUT_MS
+        int "Cloud OTA HTTP timeout (ms)"
+        default 6000
+        range 1000 30000
+        help
+            拉 manifest 和下载固件的超时。
+
+            ⚠️ 拉 manifest 是**同步**的，跑在 httpd 任务里，期间整个 Web 界面
+            卡住（webui 是单任务，见 components/webui）。所以这个值就是用户点
+            "检查更新"后界面最长的卡顿时间。别往大调 —— 网络不通时用户会以为
+            设备死了。6s 是"慢网络能成功"与"卡住不至于吓人"之间的折中。
+
+endmenu

@@ -1,0 +1,125 @@
+{
+  "facebookincubator/muse-gadget-sdk#108": {
+    "comments": 0,
+    "head_sha": null,
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      10,
+      186
+    ]
+  },
+  "facebookincubator/muse-gadget-sdk#154": {
+    "comments": 6,
+    "head_sha": null,
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      7,
+      10
+    ]
+  },
+  "facebookincubator/muse-gadget-sdk#158": {
+    "comments": 0,
+    "head_sha": null,
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      159
+    ]
+  },
+  "facebookincubator/muse-gadget-sdk#159": {
+    "comments": 2,
+    "head_sha": "4f0ef28f",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      158
+    ]
+  },
+  "facebookincubator/muse-gadget-sdk#208": {
+    "comments": 0,
+    "head_sha": "7a6ea07d",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      158
+    ]
+  },
+  "facebookincubator/muse-gadget-sdk#72": {
+    "comments": 0,
+    "head_sha": null,
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      82,
+      83
+    ]
+  },
+  "zigpy/bellows#730": {
+    "comments": 4,
+    "head_sha": "fe7e0e13",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      720,
+      741,
+      745,
+      751,
+      753,
+      168432
+    ]
+  },
+  "zigpy/bellows#741": {
+    "comments": 5,
+    "head_sha": "7fb32e78",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      695,
+      720,
+      730,
+      745,
+      751,
+      753,
+      788,
+      901,
+      902
+    ]
+  },
+  "zigpy/bellows#745": {
+    "comments": 7,
+    "head_sha": null,
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      730,
+      741,
+      753,
+      168432
+    ]
+  },
+  "zigpy/bellows#751": {
+    "comments": 2,
+    "head_sha": "c5f14fce",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": [
+      730,
+      741,
+      753,
+      168432
+    ]
+  },
+  "zigpy/bellows#753": {
+    "comments": 1,
+    "head_sha": "d51da3d2",
+    "merged_at": null,
+    "state": "open",
+    "xrefs": []
+  },
+  "zigpy/bellows@release": {
+    "published_at": "2026-09-29T17:16:41Z",
+    "tag": "1.1.0"
+  }
+}

@@ -1,0 +1,3 @@
+[submodule "mg24"]
+	path = mg24
+	url = https://github.com/bitEngineTech/bitengine-hub-zigbee-ncp.git

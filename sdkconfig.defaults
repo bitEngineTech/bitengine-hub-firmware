@@ -1,0 +1,315 @@
+# Target
+CONFIG_IDF_TARGET="esp32c5"
+
+# Flash & Partition
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# FreeRTOS
+CONFIG_FREERTOS_HZ=1000
+
+# WiFi
+CONFIG_ESP_WIFI_ENABLED=y
+
+# ---- 射频发射功率（2026-09-11，T1.4）----
+# 这一行是**刻意写死的**，不是 menuconfig 的残留：20 恰好也是 IDF 默认值，所以
+# 删掉它不会有任何可见变化，直到某次实验室复测发现功率对不上。目标市场
+# 欧盟 CE/RED + 美国 FCC，最终值由实验室实测决定，改这里之前先读
+# docs/hardware/射频功率与认证.md（三个射频各自的旋钮在哪、谁说了算）。
+# 单位 dBm，Kconfig 允许 10-20（esp_phy/Kconfig:98）。这是 PHY 侧的**上限**，
+# 高速率下的实际发射功率会更低。
+# ⚠️ 固件不调 esp_wifi_set_max_tx_power() —— 全仓零命中，是有意的：功率只有
+# 这一个出处，多一个运行时写入点就会出现"配置说 A、实际发 B"。
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=20
+
+# PSRAM (ESP32-C5 N8R8 has 8MB PSRAM)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# 内存分配策略（2026-08-10 实测调整，不要凭直觉改回去）
+#
+# 背景：C5 只有 175KB 内部堆，本固件启动 15 个子系统后基本吃干净；而 PSRAM 有
+# 8MB，把 esp_get_free_heap_size() 的总数撑到 8.2MB，完全掩盖了这件事
+# （/api/v1/status 的 free_heap / min_free_heap 是 DEFAULT 堆的**累加值**）。
+# 真实后果：WiFi/LWIP 申请 1690B 的 INTERNAL|DMA|8BIT 缓冲区持续失败，
+# 改动前实测 10 分钟内失败 2245 次（≈4 次/秒），即协议栈级丢包。
+#
+# ALWAYSINTERNAL: 16384 → 1024。原值让每个 ≤16KB 的 malloc 都优先吃内部
+# SRAM，把内部堆抽干后才溢出到 PSRAM；DMA 内存不能溢出，于是先饿死。
+# 实测启动结束时内部空闲 4.7KB → 13.9KB。
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+# WiFi/LWIP 缓冲区优先走 PSRAM。注意开启后 IDF 会强制静态 TX 缓冲并启用 cache
+# TX 缓冲，两者都落在内部 DMA 内存里，单开这一项会让内部空闲反而跌到 360B。
+# 腾出空间的办法是把常驻任务的栈挪到 PSRAM（见 psram_task.h），不是砍缓冲数量
+# ——WiFi 缓冲区数量保持 IDF 默认(10/16/32)，不要为了省内存去动它。
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# 验收口径：/api/v1/diag/heap 的 alloc_failures.count 跑满 10 分钟必须为 0，
+# internal.min_free 与 dma.min_free 都不低于 ~10KB。
+# 2026-08-10 实测（缓冲默认值 + 6 个任务栈进 PSRAM）：
+#   0 次失败，internal.min 15,948，dma.min 13,939（改动前 dma.min 是 299）。
+# Skip full 8MB PSRAM memtest at boot (~0.8s) — RS706 HW watchdog (1.6s) may be
+# armed from power-on; first WDI feed must happen well before its timeout
+CONFIG_SPIRAM_MEMTEST=n
+# XIP disabled: flash+PSRAM share MSPI, XIP causes bus contention during OTA writes
+# CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# LWIP
+CONFIG_LWIP_SO_RCVBUF=y
+CONFIG_LWIP_TCP_WND_DEFAULT=16384
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=16384
+
+# Bluetooth (BLE Proxy)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# OpenThread (Thread Border Router)
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_BORDER_ROUTER=y
+# 直连子设备上限。OpenThread 默认 10 是为省内存，不是协议限制
+# （协议上限是每路由器 511 个，kMaxChildId=511）。对主打 Thread/Matter 的
+# 网关来说 10 太低——休眠型 Matter 设备都以子设备身份挂在本机上。
+# 实测代价约 168 B/子设备（静态分配在内部 SRAM 的 .bss，不走 PSRAM）：
+#   10 → HP SRAM 221,738 B，剩 99,190 B
+#   64 → HP SRAM 230,826 B，剩  90,102 B
+# 暂定 64。再往上要先查清 min_free_heap 为何会跌到 4KB 量级。
+CONFIG_OPENTHREAD_MLE_MAX_CHILDREN=64
+# 802.15.4 帧挂起表：休眠子设备来取数据（data poll）时，ACK 里"还有你的数据"那一位靠查这张表。
+# 必须 ≥ 上面的子设备上限 —— 每个子设备同一时刻最多占一条；IDF 默认 20 是配它默认 10 个子设备的。
+# 表满时 ESP 的 OT 端口（otPlatRadioAddSrcMatch*Entry）不报错，而且 otPlatRadioEnableSrcMatch 根本不看参数 ——
+# OT 自带的兜底（加表失败就关源匹配、让所有 poll 都带挂起位）在端口这一层就失效了，所以这条约束不能放松：
+# 网关这边不会再把没进表的子设备补进去，它的下行一直断着，直到它自己重新挂靠（10-06 实测约 2.5 分钟）。
+# 代价：内部 SRAM 约 +448 B（每条短地址 2 B + 长地址 8 B）；每个要 ACK 的帧都在 802.15.4 中断里线性扫一遍。
+# 满表时 ACK 赶不赶得上：10-06 用诊断固件实测过，方法、判据与数据只写在
+# docs/test_cases_scale_baseline.md「802.15.4 帧挂起表满表压测」。thread_br.c 有编译期断言钉住"挂起表 ≥ 子设备上限"。
+CONFIG_IEEE802154_PENDING_TABLE_SIZE=64
+# 网状网地址缓存：设备数上去了缓存不够会频繁触发地址查询、拖慢时延。
+# 取子设备数的一半作为起点（默认 20 是配 10 个子设备的）。
+# ⚠️ 32，别再降。2026-08-17 曾降到 16 省 512 字节，理由写的是「本网关的 Thread
+# 网络是个位数设备量」—— 同日的扩容分析证明这条理由很脆：
+# 网关自己**没有直连子节点**（实测 /node/children 为空），而 kRouterUpgradeThreshold=16
+# 会把常供电设备主动升级成路由器，所以设备一多，绝大多数目标都要走地址解析。
+# 16 条时约 20 台就开始颠簸，失效形态是「设备 15-120 秒不可达然后自己恢复」：
+# 未命中 → 泛洪 ADDR_QRY → 3s 没等到 ADDR_NTF 就把队列里发往该 EID 的包全丢，
+# 条目退避 15s 起翻倍到 120s。全程 alloc_failures=0、/diag/heap 一片健康，
+# 是最难归因的一类现场故障。512 字节买这个，是内部 SRAM 里性价比最高的 512 字节。
+CONFIG_OPENTHREAD_TMF_ADDR_CACHE_ENTRIES=32
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
+
+# mbedtls DTLS features required by OpenThread's secure_transport.cpp
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_HELLO_VERIFY=y
+CONFIG_MBEDTLS_ECJPAKE_C=y
+CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
+
+# OTA: A/B rollback — image must call esp_ota_mark_app_valid_cancel_rollback()
+# after self-test (main.c does this once the network is up), otherwise the
+# bootloader reverts to the previous slot on next reboot.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Task WDT must actually reset the chip on hang (wdt_feed.c also
+# reconfigures at runtime with trigger_panic=true)
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Core dump to the dedicated 64KB coredump partition (was TO_NONE — the
+# partition existed but capture was disabled, so crashes left no trace)
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+
+# Ethernet (DM9051 via SPI2) — PCB hardware per iot_hub_SCH(1).pdf
+CONFIG_BITENGINE_HAS_ETHERNET=y
+CONFIG_ETHERNET_SPI_SUPPORT=y
+CONFIG_ETHERNET_SPI_DEV0_DM9051=y
+CONFIG_ETHERNET_SPI_HOST=1
+CONFIG_ETHERNET_SPI_SCLK_GPIO=6
+CONFIG_ETHERNET_SPI_MOSI_GPIO=7
+CONFIG_ETHERNET_SPI_MISO_GPIO=9
+CONFIG_ETHERNET_SPI_CLOCK_MHZ=20
+CONFIG_ETHERNET_SPI_CS0_GPIO=10
+CONFIG_ETHERNET_SPI_INT0_GPIO=28
+CONFIG_ETHERNET_SPI_PHY_RST0_GPIO=8
+CONFIG_ETHERNET_SPI_PHY_ADDR0=1
+CONFIG_ETHERNET_INTERNAL_SUPPORT=n
+
+# PCB hardware feature switches — per production BOM IOT_HUB_BOM_生产(0623).xlsx
+CONFIG_BITENGINE_HAS_HW_WATCHDOG=y
+CONFIG_BITENGINE_HAS_WS2812B=y
+CONFIG_BITENGINE_HAS_BUTTON=y
+# W25Q32 NOT populated on production board → external flash disabled.
+# (Frees GPIO8 exclusively for DM9051 PHY_RESET.)
+CONFIG_BITENGINE_HAS_MG24_RESET_PIN=y
+
+# HTTP Server
+CONFIG_HTTPD_WS_SUPPORT=y
+# WS 客户端登记必须走 post-handshake 回调：IDF 在握手时**不会**调用 uri->handler
+# （httpd_uri.c: "If the request is websocket handshake, then do not call the
+# uri->handler"），handler 只在收到数据帧时才被调用。没有这个回调，广播表永远为空，
+# 推送任务对着 0 个客户端广播，Dashboard 只在刷新时更新一次。
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+
+# Log level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# WiFi credentials
+
+# Required for OpenThread Border Router (infra_if needs netif status callback)
+CONFIG_LWIP_NETIF_STATUS_CALLBACK=y
+
+# Required for Thread Border Router IPv6 forwarding
+CONFIG_LWIP_IPV6_FORWARD=y
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+
+# lwIP hooks required for OpenThread Border Router IPv6 routing
+CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
+CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
+CONFIG_LWIP_HOOK_IP6_INPUT_CUSTOM=y
+CONFIG_LWIP_HOOK_IP6_SELECT_SRC_ADDR_CUSTOM=y
+CONFIG_LWIP_MULTICAST_PING=y
+CONFIG_LWIP_IRAM_OPTIMIZATION=y
+
+# 套接字预算：httpd 的 max_open_sockets 必须 <= LWIP_MAX_SOCKETS - 3（IDF 内部保留）。
+# 默认 10 太紧：httpd 只能给到 4，而 2 个浏览器标签就各占 1 个 WS 长连接，剩 2 个
+# 要同时承接页面资源和 API 轮询；一旦不够，lru_purge 就会踢掉"最久未活动"的连接 ——
+# WS 只出不进，在 LRU 眼里永远最闲，于是被反复踢掉（实测 Dashboard 每 15-40s
+# 断线重连一次，成对关闭正对应两个轮询请求同时到达）。
+# 抬到 16 后 httpd 可用 7，仍给 EZSP TCP 服务(3) + mDNS/SNTP 留足余量。
+#
+# 2026-08-11 再抬到 20：OTBR REST 在标准端口 8081 上多开了一个 httpd 实例
+# （见 webui_server.c），它自己要 2 个客户端套接字 + 监听 + 控制。
+# 账：可用 = 20-3 = 17；主 httpd 7 + OTBR httpd 2 + EZSP(监听1+客户端2)
+#     + mDNS + SNTP ≈ 14，留有余量。
+CONFIG_LWIP_MAX_SOCKETS=20
+CONFIG_BITENGINE_EZSP_HW_FLOWCTRL=y
+CONFIG_BITENGINE_MG24_BOOTLOADER_BAUD=460800
+
+# mDNS 服务上限。默认 10，而网关自己就占 4 个（_zigbee-bridge / _zigbee-coordinator / _http 见
+# components/mdns_svc/mdns_svc.c，加上 BR 库自己发布的 _meshcop；_slzb-06 已于 2026-08-22 停播），只剩 6 个给
+# SRP advertising proxy 代播的 Thread 子设备 —— 每个 Matter over Thread 设备
+# 占 1 个。超了之后 mdns_service_add_for_host() 返回 ESP_ERR_NO_MEM，而 proxy
+# 在预编译库里不上报，外部表现为"设备配上了，控制器里却查无此人"。
+# 历次取值 10 → 32 → 64 → 128 → 256，现值的理由见下面 2026-10-07 那段。
+# 这个值是**链表长度的运行时天花板，不是静态数组**（mdns_responder.c 的
+# can_add_more_services() 遍历计数），所以抬高它不占任何静态 RAM，只有真的注册
+# 了那么多服务时才分配 —— 与内部 SRAM 紧张的约束不冲突。
+# 超出（上限减去网关自用 4 条）的那一台起 mdns 返
+# ESP_ERR_NO_MEM → BR 库转 OT_ERROR_NO_BUFS → SRP Server 走错误分支
+# **aHost.Free() 丢掉整台主机** + 回 SERVFAIL，而 SRP client 被拒后最长退避
+# 1 小时。且先到先得：每次网关重启一起抢槽位，掉队的不是同一批。
+# ⚠️ 抬这个数的前提是 tools/patch_mdns.py 的多包应答补丁已生效 —— 否则只是
+# 把「注册不上（有 ESP_LOGE 可查）」换成「注册上了、控制器就是发现不了
+# （零日志）」，排查难度反而上升。
+# 128 → 256（2026-10-07，补"Matter-over-Thread 设备数"这块短板）：可代播余量 = 256 − 网关自用 4 = 252 条，
+# 每台 Matter 设备在每个控制方（fabric）占 1 条 —— 只接 HA 约 252 台，HA + Apple 约 126 台。仍是链表长度上限、
+# 不是静态数组：设备少时零成本，每条在用的服务约 415 B PSRAM；代播跟踪表（srp_readvertise.c，PSRAM）跟着这个数开机分配。
+# ⚠️ 抬到 256 不是只改这一个数：同一天先修了五件在 128 就已经贴边的事（最重的一件：网关重启后设备成批重注册，
+# 可能把网关打进重启循环），连同 512 卡在哪，正本都在 docs/test_cases_scale_baseline.md「SRP 代播满载压测」—— 改这个数之前先读那一节。
+# 与这个数直接绑着的两项：mdns 任务栈（下面 CONFIG_MDNS_TASK_STACK_SIZE）和 tools/patch_mdns.py 的 OVERFLOW 组（过 255）。
+# ⚠️ 抬它的前提除了上面那个多包补丁，还有跟踪表的哈希索引（同 2026-10-07）：原来的线性查找每 5 s 持 OT 锁
+# O(N²) 扫一遍，123 条实测 7.4 ms，几百条就是上百毫秒地卡住 OT 任务。
+CONFIG_MDNS_MAX_SERVICES=256
+
+# ---- 内部 SRAM 余量（2026-08-17）----
+# 实测 LAN 模式下 internal min_free 只剩 12 字节、已发生 1 次 4096 分配失败。
+# 下面这几个值此前**只存在于 sdkconfig**，不在本文件里 —— 一次 menuconfig regen
+# 就会被拉回 IDF 默认并静默吃掉内部 SRAM。IDF 每次 reconfigure 都在报
+# "Default value for ESP_WIFI_RX_BA_WIN in sdkconfig is 6 but it is 16"，
+# 说的就是这件事。固化于此。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=6
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
+
+# mDNS 的任务栈与内部分配改从 PSRAM 出（约 4.5KB）。组件默认是 *_INTERNAL，
+# 不是有意选的。psram_task.h 的两条禁忌都不适用：全组件 grep nvs_/esp_partition_
+# 零命中；用的是 xTaskCreateStatic + 显式栈缓冲，不存在自删漏栈。
+# ⚠️ 本网关自己是 Matter 记录的 mDNS 宣告者 —— mDNS 出偶发问题会打到 Matter
+# 订阅恢复，而那最长要 600s 才暴露。改这两行后别只看"启动没报错"就收工。
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
+# 栈 4096 → 8192（2026-10-07，跟着 MAX_SERVICES 抬高）：组件在 mdns 任务栈上按服务数开变长数组
+# （mdns_priv_restart_all_pcbs / restart_pcb 各 4 B×全部服务，正在探测时 init_pcb_probe 再来一份），
+# 256 条时两份约 2 KB；10-07 满载实测 8 KB 栈最少还剩 ~6 KB，再抬上限时留着余量。栈在 PSRAM（上面那行），不吃内部 SRAM。
+CONFIG_MDNS_TASK_STACK_SIZE=8192
+
+# 关掉两个 WiFi IRAM 优化（约 3.9KB）。C5 上 IRAM 与内部堆同段，少一字节 IRAM
+# 就是多一字节堆（map: _iram_end = _data_start）。
+# SLP_IRAM_OPT 的作用是降低**省电模式**下的平均电流，而 wifi_mgr.c:100/143 调的是
+# esp_wifi_set_ps(WIFI_PS_NONE) —— 省电模式压根没开，这块 IRAM 是纯白付。
+# EXTRA_IRAM_OPT 实测只有 1874 字节，别按 IDF 自称的 "5KB+" 记账。
+# CONFIG_ESP_WIFI_SLP_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_EXTRA_IRAM_OPT is not set
+# 顺手：CONFIG_PM_ENABLE 从未启用，这个"睡眠函数放 IRAM"服务的子系统不存在。
+# 它原本是被 ESP_WIFI_SLP_IRAM_OPT select 住的，上面关掉后 kconfgen 就报
+# "Default value for PM_SLEEP_FUNC_IN_IRAM in sdkconfig is y but it is n"。
+# CONFIG_PM_SLEEP_FUNC_IN_IRAM is not set
+# CONFIG_PM_SLP_IRAM_OPT is not set   # 同上：PM 未启用，白占 IRAM
+
+# ---- 扩容保险（2026-08-17，扩到 50 台的分析结论）----
+# 这三项此前**只存在于 sdkconfig**，取的是 IDF Kconfig 默认值。一次 menuconfig
+# regen 把它们翻掉就是双杀：135KB 消息池 + 全部 OT 堆（SRP server 的 host/service
+# 条目）一起回到内部 SRAM，同时 NUM_MESSAGE_BUFFERS 按 Kconfig 规则
+# `default 65 if !MSGPOOL_MANAGEMENT` 自动从 1024 掉到 65 —— 50 台设备下必然
+# 报文枯竭 + 内部 SRAM 瞬间爆掉。与本文件上面 WiFi 缓冲那条是同一类坑。成本为零。
+CONFIG_OPENTHREAD_PLATFORM_MALLOC_CAP_SPIRAM=y
+CONFIG_OPENTHREAD_PLATFORM_MSGPOOL_MANAGEMENT=y
+CONFIG_OPENTHREAD_NUM_MESSAGE_BUFFERS=1024
+
+# tcpip 收包邮箱 32→64（+128 字节内部 SRAM）。这一个邮箱要同时承接 ETH 入站、
+# WiFi 入站、OT netif 入站与 BR 组播转发，深度 32 是按个位数设备的负载定的。
+# 满了 tcpip_input() 返 ERR_MEM → pbuf 被释放 → **静默丢包**，默认日志级别下
+# 只有一条没开启的 LWIP_DEBUGF，外部完全看不见，表现为高负载下 Thread 设备
+# 偶发不可达、Matter 订阅超时。50 台批量归队正是这个形状。
+CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=64
+
+
+# ---- 固件签名（2026-08-19）----
+# 档位：只开「OTA 固件签名验证」，**不开** Secure Boot v2、**不开** Flash Encryption，
+# 不烧任何 eFuse。决策与代价见 docs/guide/固件签名与密钥保管.md。一句话版：
+#   欧盟 RED 3(3)(d)(e)(f) 要的是"更新的真实性验证"，这一档就够；
+#   Secure Boot 要烧 eFuse，而本板没有 BOOT 键、JTAG 是唯一救砖手段
+#   （见 CLAUDE.md「IO28 = BOOT strap」与救砖记录），烧掉后每块坏板直接变废板。
+#
+# ⚠️ 信任锚是**当前运行的那个 app 自己的签名块**，不是 eFuse
+#    （bootloader_support/src/secure_boot_v2/secure_boot_signatures_app.c:158
+#     "Take trusted digest key(s) from running app"）。由此推出三条：
+#
+#   1. BUILD_SIGNED_BINARIES 必须保持 y，**开发板构建也一样**。一旦刷进一个未签名
+#      的 app，它会报 "No signatures were found for the running app" 然后拒绝一切
+#      OTA（any_trusted_key==false → ESP_ERR_IMAGE_INVALID），只能拆机串口重刷。
+#   2. **私钥丢了 = 已出货设备永久失去 OTA 能力**。这是本档唯一的不可逆点 ——
+#      eFuse 没烧，但装机固件里的公钥摘要就是信任锚，换钥匙推不动已出货的设备。
+#      密钥本体在 ~/.bitengine-keys/，仓库根是软链接；指纹钉在
+#      secure_boot_pubkey.digest；`bash tools/signing_key.sh check` 是唯一机器判据。
+#   3. 串口直刷**不验签**（bootloader 不参与验证），救砖与 DIY 自编固件路径不受影响。
+#      这正是选本档而非 Secure Boot 的目的。
+#
+# 方案选 RSA-3072 而不是 ECDSA：C5 上 CONFIG_SECURE_BOOT_V2_ECDSA_INSECURE=y
+# （IDF-15721，等硬件 ECO）。该标记只 gate 硬件 Secure Boot、不 gate 本档，
+# 但没有理由去用一个被标注有故障注入问题的曲线；且 IDF 自述 RSA 验证更快。
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+
+# mbedTLS 的堆放到 PSRAM（2026-09-05 真机实测的 P0）：
+# 默认 INTERNAL 模式下 TLS 一条连接就要一块 16717 字节的连续内部 SRAM（SSL 入向记录
+# 缓冲），而本板启动完内部堆只剩 ~13KB、最大连续块 10240 —— 每次 HTTPS webhook /
+# mqtts / 云端 OTA 都在 mbedtls_ssl_setup 处以 -0x008D（PSA_ERROR_INSUFFICIENT_MEMORY）
+# 失败，/api/v1/diag/heap 的 alloc_failures 记着 size=16717 caps=INTERNAL|8BIT。
+# 选 EXTERNAL 而不是 DEFAULT：握手期间还有几十笔 <1KB 的小分配（X.509 解析等），
+# DEFAULT 会让它们继续挤内部堆并触发 HEAP_LOW。TLS 在本产品里是低频操作，PSRAM 的速度够用。
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# 云端 OTA 的 manifest 地址（2026-09-09 决策，见 docs/产品化TODO_2026-09-09.md T1.1）。
+# 会硬编码进出货固件、出货后换不掉：DNS 与托管必须一直在我们自己手里。
+# 改它之前先读 docs/guide/云端OTA设计.md 第五节。
+CONFIG_BITENGINE_OTA_CLOUD_URL="https://updates.bitengine.tech/hub/manifest.json"
+
+# ---- T9.37 服务身份：IDF 默认的 DHCP option 61 关掉，由 components/network_mgr/svc_cid.c 的钩子按网卡附 ----
+# 两份都开着报文里会有两个 client-id，哪个算数看服务器 —— 交接时的哑身份可能失效、RELEASE 退掉真租约。
+# 钩子头文件 lwip_hooks/bitengine_lwip_hooks.h 里有编译期断言，漏了这一行编不过。
+CONFIG_LWIP_DHCP_DISABLE_CLIENT_ID=y

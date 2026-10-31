@@ -1,0 +1,83 @@
+# 直连型（Hub + Muse，纯以太网）在 sdkconfig.defaults 之上的差异 —— docs/15_muse_direct_design_v1.md 2.1 / 2.7。
+# 构建：idf.py -B build-direct -DSDKCONFIG=sdkconfig.direct \
+#              -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.direct" -DBITENGINE_PROFILE=direct build
+#      或 bash tools/build_profiles.sh --only direct
+# 入库的 sdkconfig.direct 由这两份生成；HA 型的 sdkconfig 一个字节都不因直连型而变（架构 5.8 R-3）。
+#
+# 按设计第十七节的里程碑往这里加：M1 第一项（2.7）总开关 + 单独的云端 manifest；M1 第二部分纯以太网剖面
+# （BITENGINE_NET_ETH_ONLY，Kconfig 里直连型默认就是 y）+ 直连型分区表。zhub（M4）之前直连型构建仍带着桥。
+CONFIG_BITENGINE_PROFILE_DIRECT=y
+# 直连型分区表（设计 2.4）：fctry 0x7F0000、hubdb、matter；与 HA 型不能 OTA 互换，换型号只能 USB 线刷
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_direct.csv"
+# 云端 manifest 与 HA 型分开（防串刷第 1 层，设计 2.7）：tools/publish_ota.sh --profile direct 发到 /hub-direct/
+CONFIG_BITENGINE_OTA_CLOUD_URL="https://updates.bitengine.tech/hub-direct/manifest.json"
+# 开发期的 hubdb 诊断端点（设计 2.5，上板验 hub_store）。⚠️ 直连型发版前删掉这一行
+CONFIG_BITENGINE_DIAG_HUBDB=y
+# Muse 直连（设计第四、五节；M2 起）：ble_window + muse_pair + muse_link
+CONFIG_BITENGINE_ENABLE_MUSE_LINK=y
+# BLE 用 NimBLE。显式写在这里，不靠 HA 型 sdkconfig.defaults 里那两行：Kconfig 对 choice 成员的 select 无效
+# （构建日志 NOTE: select/imply has no effect on choice symbols），哪天 HA 型清理 BT 配置，直连型会静默换成 Bluedroid
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+# NimBLE host 任务栈：client_hello 的 ECDH、解密与最深 32 层的 cJSON 在 host 任务里跑（照上游）。上游 4096 没在本构建上量过，
+# host 任务只在配对剖面里存在（那时不起 Thread，内存宽裕），给 7 KB；关窗时日志打实测高水位（ble_window.c），据实再调
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=7168
+# ---- Matter 控制器（设计第九节；M7）：9.2 的表（选项名取自 #159）+ G0-5 核出来的（9.8a）----
+CONFIG_BITENGINE_ENABLE_MATTER_CTRL=y
+# 控制器 + commissioner，不带 server / shell / Wi-Fi 配网驱动
+CONFIG_ENABLE_CHIP_CONTROLLER_BUILD=y
+CONFIG_ESP_MATTER_CONTROLLER_ENABLE=y
+CONFIG_ESP_MATTER_COMMISSIONER_ENABLE=y
+CONFIG_ESP_MATTER_ENABLE_MATTER_SERVER=n
+CONFIG_ENABLE_CHIP_SHELL=n
+CONFIG_WIFI_NETWORK_COMMISSIONING_DRIVER=n
+# P3 不带 BLE（BLE-Thread 配网是 P3+，BITENGINE_MATTER_BLE_COMMISSIONING）
+CONFIG_ENABLE_ESP32_BLE_CONTROLLER=n
+CONFIG_ENABLE_CHIPOBLE=n
+# 分配与静态池都进 PSRAM（静态池的映射在 components/matter_ctrl/linker.lf）。⚠️ BSS_SEG_EXTERNAL 连带把 lwIP / BT 的 .bss 也挪进
+# PSRAM（G0-5a：起 CHIP 前内部空闲 55 → 86 KB），整机内存布局随之改变
+CONFIG_CHIP_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_ESP_MATTER_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# CHIP 任务会写 NVS（KVS）：栈必须在内部（psram_task.h 规则 1），15 KB 是 esp-matter 控制器示例的值
+CONFIG_CHIP_TASK_STACK_SIZE=15360
+# CHIP 的 KVS / 配置 / 计数 / 出厂数据都进独立的 matter 分区（设计 2.4）
+CONFIG_CHIP_FACTORY_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_CONFIG_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_COUNTERS_NAMESPACE_PARTITION_LABEL="matter"
+CONFIG_CHIP_KVS_NAMESPACE_PARTITION_LABEL="matter"
+# 凭据签发器用自己的（components/matter_ctrl/mc_issuer.cpp，设计 9.3；TODO T9.51）：esp-matter 默认的那个发给设备的 IPK 是 CHIP 的
+# 公开测试值、证书 2010 年就过期、根私钥在 matter 分区
+CONFIG_CUSTOM_OPERATIONAL_CREDS_ISSUER=y
+# 写进设备 fabric 表的管理方厂商号：开发期用 CSA 的测试厂商号 0xFFF1（TODO T9.52；esp-matter 默认 4891 是乐鑫自己的号）
+CONFIG_ESP_MATTER_CONTROLLER_VENDOR_ID=65521
+# 测试设备（CD 里是 0xFFF1 一类测试厂商号）默认拒绝（9.7；#159 取 y，产品取 n）
+CONFIG_ESP_MATTER_COMMISSIONER_SUPPORT_TEST_CD=n
+# 设备认证的 PAA 用内置快照（components/matter_ctrl/paa_snapshot.c，tools/fetch_paa.py 从 CSA DCL 主网取；设计 9.7，TODO T9.53）：
+# 随 OTA 更新、外网断着也能配、不把设备的 SKID 发给 DCL。新厂商的 PAA 要等下一版固件（发版前刷新快照）。吊销检查不开（9.7 已知限制）
+CONFIG_CUSTOM_ATTESTATION_TRUST_STORE=y
+# CONFIG_TEST_ATTESTATION_TRUST_STORE is not set
+# INFO 级会逐条打报文，串口拖住 CHIP 线程（#159 实测）；也有 CPU 的考虑（交叉清单 A-44）
+CONFIG_CHIP_LOG_DEFAULT_LEVEL_ERROR=y
+CONFIG_CHIP_PROJECT_CONFIG="components/matter_ctrl/CHIPProjectConfig.h"
+# 容量（2026-10-24 用户定：Matter 设备 32 → 128）。每条订阅常驻一个 CHIP 定时器、占一个安全会话；设备一批一起上报时交换上下文要够。
+# 定时器池在 SystemLayer 的静态对象里、交换上下文在 ExchangeManager 里（堆）—— 都在 PSRAM（linker.lf / MEM_ALLOC_MODE_EXTERNAL），不占内部 SRAM。
+# 会话池在 CHIPProjectConfig.h。⚠️ 这里改了要同步改 sdkconfig.direct（已有的值不会被 defaults 覆盖）
+CONFIG_BITENGINE_MATTER_MAX_NODES=128
+CONFIG_NUM_TIMERS=256
+CONFIG_MAX_EXCHANGE_CONTEXTS=32
+# 9.8a 第 1 条：OpenThread 归 thread_br，CHIP 不起自己的 Thread 栈管理器，经 lwIP 走网关已经在路由的 IPv6
+CONFIG_ENABLE_MATTER_OVER_THREAD=n
+# 9.8a 第 3 条：纯以太网剖面没有 Wi-Fi；网关自己就是 BR，不要 #159 给 Wi-Fi gadget 用的 IPv6 路由钩子
+CONFIG_ENABLE_WIFI_STATION=n
+CONFIG_ENABLE_ROUTE_HOOK=n
+# 9.8a 第 2 条：不改全局 lwIP 加锁模式（默认 y 会 select LWIP_TCPIP_CORE_LOCKING + LWIP_CHECK_THREAD_SAFETY，后者对没持锁的调用断言）；
+# 关掉后 CHIP 把 lwIP 调用投到 tcpip 任务，我们现有代码的模型不变
+CONFIG_USE_TCPIP_CORE_LOCK_FOR_THREAD_SAFETY=n
+# 9.8a 第 4 条：用平台 mDNS（我们打过补丁的 espressif/mdns），不另起 CHIP 的最小 mDNS（会和它抢 5353）。
+# CHIP 的以太网支持挂在 ENABLE_ETHERNET_TELEMETRY 上（CHIPDevicePlatformConfig.h），不开它平台 DNS-SD 什么都不做；
+# 它在 ESP32 上只调 esp_netif_init()（幂等）和听 IP / ETH 事件，不建网卡、不碰驱动
+CONFIG_USE_MINIMAL_MDNS=n
+CONFIG_ENABLE_ETHERNET_TELEMETRY=y
+# 9.8a 第 5 条：以太网的配网驱动是 server 端的（网络配网簇），用的是 C5 没有的片内 EMAC；不编（components/matter_ctrl/CMakeLists.txt）
+CONFIG_ETHERNET_NETWORK_COMMISSIONING_DRIVER=n

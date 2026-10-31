@@ -1,0 +1,3 @@
+dependencies:
+  cJSON:
+    version: '==1.7.19~2'   # 钉死，见 main/idf_component.yml 注释

@@ -1,0 +1,168 @@
+:root {
+    --bg: #1a1a2e;
+    --bg2: #16213e;
+    --card: #1e2746;
+    --border: #2a3555;
+    --text: #e0e0e0;
+    --muted: #888;
+    --accent: #4fc3f7;
+    --green: #4caf50;
+    --yellow: #ffa726;
+    --red: #ef5350;
+    --blue: #42a5f5;
+    --radius: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+a { color: var(--accent); text-decoration: none; }
+
+/* Layout */
+#app { display: flex; min-height: 100vh; }
+#sidebar { width: 200px; background: var(--bg2); padding: 12px 0; flex-shrink: 0; overflow-y: auto; }
+#main { flex: 1; min-width: 0; }
+#topbar { height: 48px; background: var(--bg2); display: flex; align-items: center; padding: 0 16px; gap: 12px; border-bottom: 1px solid var(--border); }
+#topbar-title { font-weight: 600; }
+#topbar-status { margin-left: auto; }
+#content { padding: 16px; }
+#menu-btn { display: none; background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; }
+
+/* Nav */
+.nav-header { padding: 12px 16px; display: flex; align-items: center; gap: 8px; }
+.logo { font-size: 20px; color: var(--accent); }
+.title { font-weight: 700; font-size: 16px; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; color: var(--muted); transition: .15s; cursor: pointer; }
+.nav-item:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.nav-item.active { color: var(--accent); background: rgba(79,195,247,.1); border-right: 3px solid var(--accent); }
+.nav-icon { width: 20px; text-align: center; }
+
+/* Cards */
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 4px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+.card-label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+.card-value { font-size: 18px; font-weight: 600; }
+.card-green { border-left: 3px solid var(--green); }
+.card-yellow { border-left: 3px solid var(--yellow); }
+.card-red { border-left: 3px solid var(--red); }
+.page-title { font-size: 20px; font-weight: 600; margin-bottom: 16px; }
+.section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 8px; padding-left: 2px; border-left: 3px solid var(--accent); padding-left: 8px; }
+.section-label:first-of-type { margin-top: 0; }
+
+/* The 421 banner from the cross-origin guard (App.showHostBanner).
+   position:sticky rather than a plain block: this message says "every save you
+   make will fail", and a message scrolled out of view has not been delivered. */
+.banner { position: sticky; top: 0; z-index: 100; padding: 10px 14px;
+          font-size: 13px; line-height: 1.5; border-radius: 0 0 var(--radius) var(--radius); }
+.banner-red { background: rgba(239,83,80,.2); color: var(--red);
+              border-bottom: 2px solid var(--red); }
+
+/* Badges */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.badge-green { background: rgba(76,175,80,.2); color: var(--green); }
+.badge-red { background: rgba(239,83,80,.2); color: var(--red); }
+.badge-blue { background: rgba(66,165,245,.2); color: var(--blue); }
+.badge-yellow { background: rgba(255,167,38,.2); color: var(--yellow); }
+
+/* WiFi bars */
+.bar { display: inline-block; width: 4px; margin: 0 1px; background: #333; border-radius: 1px; vertical-align: bottom; }
+.bar:nth-child(1) { height: 6px; }
+.bar:nth-child(2) { height: 10px; }
+.bar:nth-child(3) { height: 14px; }
+.bar:nth-child(4) { height: 18px; }
+.bar.bar-on { background: var(--green); }
+
+/* Forms */
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+/* min-width is what actually makes form-row wrap on a phone. flex-wrap alone
+   is not enough: two flex:1 children keep compressing instead of wrapping —
+   measured at a 360px viewport, the password field was down to 141px with only
+   71px of visible text. Commissioning happens mostly on phones, so wrapping
+   here is mandatory. */
+.form-group { margin-bottom: 12px; min-width: 200px; }
+.form-group label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.input { width: 100%; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 14px; }
+.input:focus { outline: none; border-color: var(--accent); }
+
+/* Show/hide toggle for password fields. Text (SHOW/HIDE) rather than an eye
+   icon: every other icon in this UI is a monochrome HTML entity (&#9632; and
+   friends), while an eye exists only as a color emoji and renders
+   inconsistently across phone fonts.
+   The parent reserves room with padding-right; the button is absolutely
+   positioned over the right edge of the input. */
+.input-pw { position: relative; }
+.input-pw .input { padding-right: 58px; }
+/* Full input height rather than just wrapping the text: a finger target
+   should not be tiny (text height alone is about 21px). */
+.pw-toggle {
+    position: absolute; right: 1px; top: 1px; bottom: 1px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 10px; background: none; border: none;
+    color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .5px;
+    cursor: pointer;
+}
+.pw-toggle:hover { color: var(--accent); }
+.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.btn-primary { background: var(--accent); color: #000; }
+.btn-primary:hover { opacity: .85; }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-sm { padding: 5px 12px; font-size: 12px; background: var(--border); color: var(--text); }
+.btn-sm:hover { background: #3a4565; }
+
+/* Language picker in the topbar and on the login/setup gates. Deliberately
+   plain and always visible: when auto-detection guesses wrong the user cannot
+   read any label pointing at it, so it must be recognizable by shape alone. */
+.lang-select { background: var(--border); color: var(--text); border: none; border-radius: 4px;
+               padding: 5px 8px; font-size: 12px; font-family: inherit; cursor: pointer; }
+.login-lang { margin-top: 16px; text-align: center; }
+
+/* Switch */
+.switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #444; border-radius: 22px; transition: .2s; cursor: pointer; }
+.slider:before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+input:checked + .slider { background: var(--accent); }
+input:checked + .slider:before { transform: translateX(18px); }
+
+/* Progress */
+.progress-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s; width: 0; }
+
+/* List */
+.list-item { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; cursor: pointer; }
+.list-item:hover { background: rgba(255,255,255,.03); }
+
+/* Table */
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th { text-align: left; padding: 6px 8px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+
+/* Login — the login page owns all of #app (no sidebar, no topbar) and fills
+   and centers itself via flex:1. #app is already flex with min-height:100vh,
+   so no height is needed here. */
+.login-wrap { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login-card { width: 100%; max-width: 340px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+.login-brand { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 20px; }
+.login-msg { display: block; min-height: 18px; margin-top: 10px; font-size: 13px; }
+/* Explanatory paragraph on the forced set-password page. Yellow left border
+   rather than red: this is a normal first-boot step, not an error state, and
+   red would make people think the device is broken. */
+.setup-lead {
+    margin-bottom: 18px; padding: 10px 12px; font-size: 13px; line-height: 1.5;
+    border-left: 3px solid var(--yellow); background: rgba(255,167,38,.08);
+}
+
+/* Utility */
+.text-center { text-align: center; }
+.text-muted { color: var(--muted); font-size: 12px; }
+.hint { color: var(--muted); font-size: 13px; }
+
+/* Mobile */
+@media (max-width: 768px) {
+    #sidebar { position: fixed; left: -200px; top: 0; bottom: 0; z-index: 100; transition: left .2s; }
+    #sidebar.open { left: 0; }
+    #menu-btn { display: block; }
+    .card-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 480px) {
+    .card-grid { grid-template-columns: 1fr; }
+}

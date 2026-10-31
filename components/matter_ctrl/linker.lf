@@ -1,0 +1,14 @@
+# 静态池进 PSRAM（#159 同法；要 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y）。
+# 两个归档都要：控制器单例 matter_controller_client::get_instance() 定义在头文件里，它的静态对象（含 commissioner 的设备池）
+# 实例化在调用它的编译单元 = 本组件（G0-5a 实测：只映射 esp_matter 时本组件 .dram0.bss 127 KB，链接时内部 SRAM 溢出 21 KB）
+[mapping:matter_ctrl_self]
+archive: libmatter_ctrl.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:matter_ctrl_esp_matter]
+archive: libespressif__esp_matter.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)

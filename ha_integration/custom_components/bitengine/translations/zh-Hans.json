@@ -1,0 +1,106 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "bitEngine Hub",
+        "description": "请输入网关 Web 界面的密码（就是你在网页上设的那个）。网关未设密码时可留空。",
+        "data": {
+          "host": "主机地址",
+          "password": "密码"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新认证 bitEngine Hub",
+        "description": "网关拒绝了已保存的密码，请输入当前密码。",
+        "data": {
+          "password": "密码"
+        }
+      },
+      "confirm": {
+        "title": "bitEngine Hub",
+        "description": "确认添加 **{name}**？\n\n网关当前处于开放状态，不需要密码。若之后在设置里打开「OTBR / 只读接口认证」，HA 会再向你索要密码。"
+      }
+    },
+    "error": {
+      "cannot_connect": "连接失败",
+      "invalid_auth": "密码不正确"
+    },
+    "abort": {
+      "already_configured": "该设备已添加",
+      "reauth_successful": "重新认证成功"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "芯片温度"
+      },
+      "uptime": {
+        "name": "运行时长"
+      },
+      "tcp_clients": {
+        "name": "协调器连接数"
+      },
+      "wifi_rssi": {
+        "name": "Wi-Fi 信号"
+      },
+      "internal_free_heap": {
+        "name": "内部可用内存"
+      },
+      "zigbee_channel": {
+        "name": "Zigbee 信道"
+      },
+      "ncp_version": {
+        "name": "Zigbee 固件版本"
+      },
+      "active_interface": {
+        "name": "当前网络接口",
+        "state": {
+          "eth": "以太网",
+          "wifi": "Wi-Fi",
+          "softap": "热点",
+          "none": "离线"
+        }
+      }
+    },
+    "binary_sensor": {
+      "mg24_alive": {
+        "name": "Zigbee 芯片"
+      },
+      "eth_link_up": {
+        "name": "以太网链路"
+      },
+      "safe_mode": {
+        "name": "安全模式"
+      },
+      "firmware_unsigned": {
+        "name": "固件未签名"
+      },
+      "night_active": {
+        "name": "夜间模式生效中"
+      },
+      "poe_present": {
+        "name": "PoE 供电"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "重启网关"
+      },
+      "zigbee_restart": {
+        "name": "重启 Zigbee 芯片"
+      }
+    },
+    "switch": {
+      "night_mode": {
+        "name": "夜间模式"
+      }
+    },
+    "number": {
+      "led_brightness": {
+        "name": "LED 亮度"
+      }
+    }
+  }
+}

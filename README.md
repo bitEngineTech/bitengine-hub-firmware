@@ -136,10 +136,10 @@ documents above are the public reference.
 
 | When | What |
 |---|---|
-| Oct 2026 | Public dev-log and feedback collection; ZHA and Zigbee2MQTT tested; source release under Apache-2.0 with build instructions |
+| Oct 2026 ✅ | Public dev-log and feedback collection; ZHA and Zigbee2MQTT tested; source release under Apache-2.0 with build instructions (published Oct 30) |
 | Nov 2026 | First signed release images; validation on current Home Assistant releases |
 | After source release | Submission to the Zigbee2MQTT and ZHA supported-adapter lists |
-| Dec 2026 (target) | Crowd Supply campaign launch |
+| Dec 2026 (target) | Crowdfunding campaign launch |
 
 ## License
 
